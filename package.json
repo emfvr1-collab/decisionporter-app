@@ -1,0 +1,22 @@
+{
+  "name": "sentry-app",
+  "version": "1.0.0",
+  "description": "Sentry — a Shopify decision-layer app",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "node-fetch": "^2.7.0",
+    "pg": "^8.23.0"
+  }
+}

@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sentry</title>
+<style>
+  /* Kept deliberately simple — plain colors, plain layout, no fancy effects */
+  body {
+    font-family: -apple-system, Arial, sans-serif;
+    background: #f5f5f5;
+    color: #222;
+    margin: 0;
+    padding: 24px;
+  }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  h2 { font-size: 16px; margin: 32px 0 10px; }
+  p.sub { color: #666; margin-top: 0; margin-bottom: 24px; }
+  fieldset {
+    border: 1px solid #ddd; background: #fff; padding: 16px;
+    margin-bottom: 12px; max-width: 420px;
+  }
+  legend { font-weight: bold; font-size: 14px; padding: 0 6px; }
+  label { display: block; font-size: 13px; margin-top: 10px; margin-bottom: 4px; color: #444; }
+  input[type="text"], input[type="email"], input[type="password"] {
+    width: 100%; padding: 6px 8px; border: 1px solid #ccc; font-size: 14px;
+    box-sizing: border-box;
+  }
+  .btn {
+    margin-top: 14px; padding: 8px 14px; background: #222; color: #fff;
+    border: none; cursor: pointer; font-size: 14px;
+  }
+  .btn:disabled { background: #999; cursor: not-allowed; }
+  .status-msg { font-size: 13px; margin-top: 10px; }
+  .status-msg.ok { color: #1a7f4e; }
+  .status-msg.err { color: #b03a2e; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    border: 1px solid #ddd;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid #eee;
+    font-size: 14px;
+  }
+  th { background: #fafafa; color: #444; }
+  .confidence-high { color: #1a7f4e; font-weight: bold; }
+  .confidence-mid { color: #b8860b; font-weight: bold; }
+  .confidence-low { color: #b03a2e; font-weight: bold; }
+  .plans { display: flex; gap: 12px; margin-top: 28px; flex-wrap: wrap; }
+  .plan-card {
+    background: #fff; border: 1px solid #ddd; padding: 16px;
+    width: 180px;
+  }
+  .plan-card h3 { margin: 0 0 6px; font-size: 16px; }
+  .plan-card .price { font-size: 20px; font-weight: bold; margin-bottom: 10px; }
+  .plan-card button {
+    width: 100%; padding: 8px; background: #222; color: #fff;
+    border: none; cursor: pointer; font-size: 14px;
+  }
+  .note {
+    margin-top: 28px; padding: 12px; background: #fff8e1;
+    border: 1px solid #ffe082; font-size: 13px; color: #5f4b00;
+  }
+</style>
+</head>
+<body>
+
+  <h1>Sentry</h1>
+  <p class="sub">Connect a tool below, then sync to see real decisions in the feed.</p>
+
+  <h2>Gorgias — support tickets</h2>
+  <fieldset id="gorgias-connect-box">
+    <legend>Connect Gorgias</legend>
+    <label for="gorgias-subdomain">Gorgias subdomain (the part before .gorgias.com)</label>
+    <input type="text" id="gorgias-subdomain" placeholder="your-store">
+    <label for="gorgias-email">Agent email</label>
+    <input type="email" id="gorgias-email" placeholder="you@yourstore.com">
+    <label for="gorgias-apikey">API key</label>
+    <input type="password" id="gorgias-apikey" placeholder="Found in Gorgias: Settings → REST API">
+    <br>
+    <button class="btn" id="gorgias-connect-btn" onclick="connectGorgias()">Connect</button>
+    <div class="status-msg" id="gorgias-connect-status"></div>
+  </fieldset>
+  <button class="btn" id="gorgias-sync-btn" onclick="syncGorgias()" style="display:none;">Sync tickets now</button>
+  <div class="status-msg" id="gorgias-sync-status"></div>
+
+  <h2>Klaviyo — churn risk &amp; win-back</h2>
+  <fieldset id="klaviyo-connect-box">
+    <legend>Connect Klaviyo</legend>
+    <label for="klaviyo-apikey">Private API key</label>
+    <input type="password" id="klaviyo-apikey" placeholder="Found in Klaviyo: Settings → API Keys">
+    <label for="klaviyo-listid">Win-back list ID</label>
+    <input type="text" id="klaviyo-listid" placeholder="Found on the list's page in Klaviyo">
+    <br>
+    <button class="btn" id="klaviyo-connect-btn" onclick="connectKlaviyo()">Connect</button>
+    <div class="status-msg" id="klaviyo-connect-status"></div>
+  </fieldset>
+  <button class="btn" id="klaviyo-sync-btn" onclick="syncKlaviyo()" style="display:none;">Check churn risk now</button>
+  <div class="status-msg" id="klaviyo-sync-status"></div>
+
+  <h2>Inventory Planner — reorder urgency</h2>
+  <fieldset id="ip-connect-box">
+    <legend>Connect Inventory Planner</legend>
+    <label for="ip-apikey">API key</label>
+    <input type="password" id="ip-apikey" placeholder="Found in Inventory Planner: Account → Settings → API">
+    <label for="ip-accountid">Account ID</label>
+    <input type="text" id="ip-accountid" placeholder="Shown on the same API settings page">
+    <br>
+    <button class="btn" id="ip-connect-btn" onclick="connectIP()">Connect</button>
+    <div class="status-msg" id="ip-connect-status"></div>
+  </fieldset>
+  <button class="btn" id="ip-sync-btn" onclick="syncIP()" style="display:none;">Check reorder urgency now</button>
+  <div class="status-msg" id="ip-sync-status"></div>
+
+  <h2>Judge.me — review triage</h2>
+  <fieldset id="jm-connect-box">
+    <legend>Connect Judge.me</legend>
+    <label for="jm-shopdomain">Shop domain</label>
+    <input type="text" id="jm-shopdomain" placeholder="your-store.myshopify.com">
+    <label for="jm-apitoken">Private API Token</label>
+    <input type="password" id="jm-apitoken" placeholder="Found in Judge.me: Settings → Integrations → View API tokens">
+    <br>
+    <button class="btn" id="jm-connect-btn" onclick="connectJM()">Connect</button>
+    <div class="status-msg" id="jm-connect-status"></div>
+  </fieldset>
+  <button class="btn" id="jm-sync-btn" onclick="syncJM()" style="display:none;">Check reviews now</button>
+  <div class="status-msg" id="jm-sync-status"></div>
+
+  <h2>Decision feed</h2>
+  <table id="feed-table">
+    <thead>
+      <tr><th>Source</th><th>Item</th><th>Confidence</th><th>Action</th></tr>
+    </thead>
+    <tbody id="feed-body">
+      <tr><td colspan="4">Connect a tool above, then sync it.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="plans">
+    <div class="plan-card">
+      <h3>Starter</h3>
+      <div class="price">$29/mo</div>
+      <button onclick="selectPlan('starter')">Choose</button>
+    </div>
+    <div class="plan-card">
+      <h3>Growth</h3>
+      <div class="price">$79/mo</div>
+      <button onclick="selectPlan('growth')">Choose</button>
+    </div>
+    <div class="plan-card">
+      <h3>Scale</h3>
+      <div class="price">$199/mo</div>
+      <button onclick="selectPlan('scale')">Choose</button>
+    </div>
+  </div>
+
+  <div class="note">
+    Gorgias and the Judge.me spam check use simple, transparent
+    keyword/length heuristics — real starting points, not trained
+    models. Klaviyo and Inventory Planner decisions use each
+    platform's own real computed numbers (churn probability, days to
+    stockout), and Judge.me's founder-reply and photo flags use real
+    review fields (rating, published photos) — Sentry mostly applies
+    thresholds and routes or surfaces the result. Inventory Planner
+    and Judge.me have no write-back API for this kind of action, so
+    their results appear here in the feed rather than being written
+    back into those tools.
+  </div>
+
+<script>
+  function getShop() {
+    var params = new URLSearchParams(window.location.search);
+    return params.get('shop') || '';
+  }
+
+  function selectPlan(plan) {
+    var shop = getShop();
+    if (!shop) { alert('Missing shop parameter — open this app from inside Shopify admin.'); return; }
+    window.location.href = '/billing/select/' + plan + '?shop=' + shop;
+  }
+
+  function confidenceClass(c) {
+    if (c >= 0.85) return 'confidence-high';
+    if (c >= 0.6) return 'confidence-mid';
+    return 'confidence-low';
+  }
+
+  // Each integration's sync results are kept separately and merged
+  // into one feed, so syncing Klaviyo doesn't erase Gorgias results.
+  var feedBySource = { Gorgias: [], Klaviyo: [], "Inventory Planner": [], "Judge.me": [] };
+
+  function renderFeed() {
+    var all = feedBySource.Gorgias.concat(feedBySource.Klaviyo, feedBySource["Inventory Planner"], feedBySource["Judge.me"]);
+    var body = document.getElementById('feed-body');
+    body.innerHTML = '';
+    if (!all.length) {
+      body.innerHTML = '<tr><td colspan="4">Connect a tool above, then sync it.</td></tr>';
+      return;
+    }
+    all.forEach(function(row) {
+      var tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td>' + row.source + '</td>' +
+        '<td>' + row.item + '</td>' +
+        '<td class="' + confidenceClass(row.confidence) + '">' + row.confidence.toFixed(2) + '</td>' +
+        '<td>' + row.action + '</td>';
+      body.appendChild(tr);
+    });
+  }
+
+  // ---------- Gorgias ----------
+  function checkGorgiasStatus() {
+    var shop = getShop();
+    if (!shop) return;
+    fetch('/api/gorgias/status?shop=' + encodeURIComponent(shop))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.connected) {
+          document.getElementById('gorgias-connect-box').style.display = 'none';
+          document.getElementById('gorgias-sync-btn').style.display = 'inline-block';
+        }
+      });
+  }
+
+  function connectGorgias() {
+    var shop = getShop();
+    var subdomain = document.getElementById('gorgias-subdomain').value.trim();
+    var email = document.getElementById('gorgias-email').value.trim();
+    var apiKey = document.getElementById('gorgias-apikey').value.trim();
+    var statusEl = document.getElementById('gorgias-connect-status');
+    var btn = document.getElementById('gorgias-connect-btn');
+
+    if (!shop) { statusEl.textContent = 'Missing shop parameter.'; statusEl.className = 'status-msg err'; return; }
+    if (!subdomain || !email || !apiKey) {
+      statusEl.textContent = 'Fill in all three fields.'; statusEl.className = 'status-msg err'; return;
+    }
+
+    btn.disabled = true;
+    statusEl.textContent = 'Checking credentials with Gorgias…';
+    statusEl.className = 'status-msg';
+
+    fetch('/api/gorgias/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shop: shop, subdomain: subdomain, email: email, apiKey: apiKey })
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        btn.disabled = false;
+        if (data.ok) {
+          statusEl.textContent = 'Connected.';
+          statusEl.className = 'status-msg ok';
+          document.getElementById('gorgias-connect-box').style.display = 'none';
+          document.getElementById('gorgias-sync-btn').style.display = 'inline-block';
+        } else {
+          statusEl.textContent = data.error || 'Could not connect.';
+          statusEl.className = 'status-msg err';
+        }
+      })
+      .catch(function() {
+        btn.disabled = false;
+        statusEl.textContent = 'Network error — is the app running?';
+        statusEl.className = 'status-msg err';
+      });
+  }
+
+  function syncGorgias() {
+    var shop = getShop();
+    var btn = document.getElementById('gorgias-sync-btn');
+    var statusEl = document.getElementById('gorgias-sync-status');
+
+    btn.disabled = true;
+    statusEl.textContent = 'Fetching open tickets from Gorgias…';
+    statusEl.className = 'status-msg';
+
+    fetch('/api/gorgias/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shop: shop })
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        btn.disabled = false;
+        if (data.ok) {
+          statusEl.textContent = 'Synced ' + data.count + ' open ticket(s).';
+          statusEl.className = 'status-msg ok';
+          feedBySource.Gorgias = data.results;
+          renderFeed();
+        } else {
+          statusEl.textContent = data.error || 'Sync failed.';
+          statusEl.className = 'status-msg err';
+        }
+      })
+      .catch(function() {
+        btn.disabled = false;
+        statusEl.textContent = 'Network error during sync.';
+        statusEl.className = 'status-msg err';
+      });
+  }
+
+  // ---------- Klaviyo ----------
+  function checkKlaviyoStatus() {
+    var shop = getShop();
+    if (!shop) return;
+    fetch('/api/klaviyo/status?shop=' + encodeURIComponent(shop))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.connected) {
+          document.getElementById('klaviyo-connect-box').style.display = 'none';
+          document.getElementById('klaviyo-sync-btn').style.display = 'inline-block';
+        }
+      });
+  }
+
+  function connectKlaviyo() {
+    var shop = getShop();
+    var apiKey = document.getElementById('klaviyo-apikey').value.trim();
+    var winbackListId = document.getElementById('klaviyo-listid').value.trim();
+    var statusEl = document.getElementById('klaviyo-connect-status');
+    var btn = document.getElementById('klaviyo-connect-btn');
+
+    if (!shop) { statusEl.textContent = 'Missing shop parameter.'; statusEl.className = 'status-msg err'; return; }
+    if (!apiKey || !winbackListId) {
+      statusEl.textContent = 'Fill in both fields.'; statusEl.className = 'status-msg err'; return;
+    }
+
+    btn.disabled = true;
+    statusEl.textContent = 'Checking credentials with Klaviyo…';
+    statusEl.className = 'status-msg';
+
+    fetch('/api/klaviyo/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shop: shop, apiKey: apiKey, winbackListId: winbackListId })
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        btn.disabled = false;
+        if (data.ok) {
+          statusEl.textContent = 'Connected.';
+          statusEl.className = 'status-msg ok';
+          document.getElementById('klaviyo-connect-box').style.display = 'none';
+          document.getElementById('klaviyo-sync-btn').style.display = 'inline-block';
+        } else {
+          statusEl.textContent = data.error || 'Could not connect.';
+          statusEl.className = 'status-msg err';
+        }
+      })
+      .catch(function() {
+        btn.disabled = false;
+        statusEl.textContent = 'Network error — is the app running?';
+        statusEl.className = 'status-msg err';
+      });
+  }
+
+  function syncKlaviyo() {
+    var shop = getShop();
+    var btn = document.getElementById('klaviyo-sync-btn');
+    var statusEl = document.getElementById('klaviyo-sync-status');
+
+    btn.disabled = true;
+    statusEl.textContent = 'Checking churn risk with Klaviyo…';
+    statusEl.className = 'status-msg';
+
+    fetch('/api/klaviyo/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shop: shop })
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        btn.disabled = false;
+        if (data.ok) {
+          statusEl.textContent = 'Checked ' + data.count + ' profile(s) with enough history to score.';
+          statusEl.className = 'status-msg ok';
+          feedBySource.Klaviyo = data.results;
+          renderFeed();
+        } else {
+          statusEl.textContent = data.error || 'Sync failed.';
+          statusEl.className = 'status-msg err';
+        }
+      })
+      .catch(function() {
+        btn.disabled = false;
+        statusEl.textContent = 'Network error during sync.';
+        statusEl.className = 'status-msg err';
+      });
+  }
+
+  // ---------- Inventory Planner ----------
+  function checkIPStatus() {
+    var shop = getShop();
+    if (!shop) return;
+    fetch('/api/inventory-planner/status?shop=' + encodeURIComponent(shop))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.connected) {
+          document.getElementById('ip-connect-box').style.display = 'none';
+          document.getElementById('ip-sync-btn').style.display = 'inline-block';
+        }
+      });
+  }
+
+  function connectIP() {
+    var shop = getShop();
+    var apiKey = document.getElementById('ip-apikey').value.trim();
+    var accountId = document.getElementById('ip-accountid').value.trim();
+    var statusEl = document.getElementById('ip-connect-status');
+    var btn = document.getElementById('ip-connect-btn');
+
+    if (!shop) { statusEl.textContent = 'Missing shop parameter.'; statusEl.className = 'status-msg err'; return; }
+    if (!apiKey || !accountId) {
+      statusEl.textContent = 'Fill in both fields.'; statusEl.className = 'status-msg err'; return;
+    }
+
+    btn.disabled = true;
+    statusEl.textContent = 'Checking credentials with Inventory Planner…';
+    statusEl.className = 'status-msg';
+
+    fetch('/api/inventory-planner/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shop: shop, apiKey: apiKey, accountId: accountId })
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        btn.disabled = false;
+        if (data.ok) {
+          statusEl.textContent = 'Connected.';
+          statusEl.className = 'status-msg ok';
+          document.getElementById('ip-connect-box').style.display = 'none';
+          document.getElementById('ip-sync-btn').style.display = 'inline-block';
+        } else {
+          statusEl.textContent = data.error || 'Could not connect.';
+          statusEl.className = 'status-msg err';
+        }
+      })
+      .catch(function() {
+        btn.disabled = false;
+        statusEl.textContent = 'Network error — is the app running?';
+        statusEl.className = 'status-msg err';
+      });
+  }
+
+  function syncIP() {
+    var shop = getShop();
+    var btn = document.getElementById('ip-sync-btn');
+    var statusEl = document.getElementById('ip-sync-status');
+
+    btn.disabled = true;
+    statusEl.textContent = 'Checking reorder urgency with Inventory Planner…';
+    statusEl.className = 'status-msg';
+
+    fetch('/api/inventory-planner/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shop: shop })
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        btn.disabled = false;
+        if (data.ok) {
+          statusEl.textContent = 'Checked ' + data.count + ' variant(s) Inventory Planner recommends reordering.';
+          statusEl.className = 'status-msg ok';
+          feedBySource["Inventory Planner"] = data.results;
+          renderFeed();
+        } else {
+          statusEl.textContent = data.error || 'Sync failed.';
+          statusEl.className = 'status-msg err';
+        }
+      })
+      .catch(function() {
+        btn.disabled = false;
+        statusEl.textContent = 'Network error during sync.';
+        statusEl.className = 'status-msg err';
+      });
+  }
+
+  // ---------- Judge.me ----------
+  function checkJMStatus() {
+    var shop = getShop();
+    if (!shop) return;
+    fetch('/api/judgeme/status?shop=' + encodeURIComponent(shop))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.connected) {
+          document.getElementById('jm-connect-box').style.display = 'none';
+          document.getElementById('jm-sync-btn').style.display = 'inline-block';
+        }
+      });
+  }
+
+  function connectJM() {
+    var shop = getShop();
+    var shopDomain = document.getElementById('jm-shopdomain').value.trim();
+    var apiToken = document.getElementById('jm-apitoken').value.trim();
+    var statusEl = document.getElementById('jm-connect-status');
+    var btn = document.getElementById('jm-connect-btn');
+
+    if (!shop) { statusEl.textContent = 'Missing shop parameter.'; statusEl.className = 'status-msg err'; return; }
+    if (!shopDomain || !apiToken) {
+      statusEl.textContent = 'Fill in both fields.'; statusEl.className = 'status-msg err'; return;
+    }
+
+    btn.disabled = true;
+    statusEl.textContent = 'Checking credentials with Judge.me…';
+    statusEl.className = 'status-msg';
+
+    fetch('/api/judgeme/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shop: shop, shopDomain: shopDomain, apiToken: apiToken })
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        btn.disabled = false;
+        if (data.ok) {
+          statusEl.textContent = 'Connected.';
+          statusEl.className = 'status-msg ok';
+          document.getElementById('jm-connect-box').style.display = 'none';
+          document.getElementById('jm-sync-btn').style.display = 'inline-block';
+        } else {
+          statusEl.textContent = data.error || 'Could not connect.';
+          statusEl.className = 'status-msg err';
+        }
+      })
+      .catch(function() {
+        btn.disabled = false;
+        statusEl.textContent = 'Network error — is the app running?';
+        statusEl.className = 'status-msg err';
+      });
+  }
+
+  function syncJM() {
+    var shop = getShop();
+    var btn = document.getElementById('jm-sync-btn');
+    var statusEl = document.getElementById('jm-sync-status');
+
+    btn.disabled = true;
+    statusEl.textContent = 'Fetching reviews from Judge.me…';
+    statusEl.className = 'status-msg';
+
+    fetch('/api/judgeme/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shop: shop })
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        btn.disabled = false;
+        if (data.ok) {
+          statusEl.textContent = 'Checked ' + data.count + ' review(s).';
+          statusEl.className = 'status-msg ok';
+          feedBySource["Judge.me"] = data.results;
+          renderFeed();
+        } else {
+          statusEl.textContent = data.error || 'Sync failed.';
+          statusEl.className = 'status-msg err';
+        }
+      })
+      .catch(function() {
+        btn.disabled = false;
+        statusEl.textContent = 'Network error during sync.';
+        statusEl.className = 'status-msg err';
+      });
+  }
+
+  checkGorgiasStatus();
+  checkKlaviyoStatus();
+  checkIPStatus();
+  checkJMStatus();
+</script>
+
+</body>
+</html>
