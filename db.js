@@ -1,5 +1,5 @@
 /**
- * db.js — Postgres storage for Sentry
+ * db.js — Postgres storage for DecisionPorter
  * -----------------------------------------------------------------
  * Replaces the single shops.json file. Same shape of data, but this
  * survives a server restart cleanly, and — more importantly than it

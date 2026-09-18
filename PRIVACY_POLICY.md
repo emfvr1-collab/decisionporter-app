@@ -1,4 +1,4 @@
-# Sentry — Privacy Policy (Draft)
+# DecisionPorter — Privacy Policy (Draft)
 
 *Replace the bracketed parts with your real information before publishing
 this anywhere. This is a starting point, not legal advice — consider
@@ -9,11 +9,11 @@ Planner, or Judge.me.*
 **Last updated:** [date]
 
 ## Who we are
-Sentry is provided by [your business name], [your address or "a sole
+DecisionPorter is provided by [your business name], [your address or "a sole
 proprietorship based in Pennsylvania, USA"].
 
 ## What we collect
-When a store installs Sentry, we collect:
+When a store installs DecisionPorter, we collect:
 - The store's Shopify domain and access token, so the app can function.
 - Once connected, data from the integrations you authorize (Gorgias
   tickets, Klaviyo send data, Inventory Planner stock levels, Judge.me

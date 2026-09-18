@@ -1,7 +1,7 @@
 {
-  "name": "sentry-app",
+  "name": "decisionporter-app",
   "version": "1.0.0",
-  "description": "Sentry — a Shopify decision-layer app",
+  "description": "DecisionPorter — a Shopify decision-layer app",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

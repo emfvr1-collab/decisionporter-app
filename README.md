@@ -1,4 +1,4 @@
-# Sentry — Starter App
+# DecisionPorter — Starter App
 
 This is a real, working Shopify app. It's simplified on purpose so it's
 easy to follow. Do these steps in order.
@@ -23,12 +23,12 @@ easy to follow. Do these steps in order.
 1. On the dashboard, enter your Gorgias subdomain, agent email, and
    API key. Find these in Gorgias: **Settings → REST API** — click
    "Generate Password" to get an API key.
-2. Sentry checks those credentials against Gorgias before saving them.
+2. DecisionPorter checks those credentials against Gorgias before saving them.
 3. Click "Sync tickets now" — it pulls your open tickets and runs each
    one through a simple, transparent classifier (keyword-based, not a
    trained model — see the comments in `server.js`).
 4. Anything scored 0.85 confidence or higher gets a tag added back in
-   Gorgias automatically (`sentry-priority` or `sentry-routine`).
+   Gorgias automatically (`decisionporter-priority` or `decisionporter-routine`).
    Anything below that is left alone for a human to review.
 
 ## How the Klaviyo part actually works
@@ -36,12 +36,12 @@ easy to follow. Do these steps in order.
    API Keys in Klaviyo) and the ID of the Klaviyo list you want
    at-risk customers added to (a "win-back" list you create in
    Klaviyo first — the list's ID is shown on its page).
-2. Sentry checks the key against Klaviyo's `/accounts` endpoint
+2. DecisionPorter checks the key against Klaviyo's `/accounts` endpoint
    before saving it.
 3. Click "Check churn risk now" — it pulls your customer profiles
    along with Klaviyo's own predictive churn score for each one.
-4. Unlike Gorgias, Sentry isn't inventing this score itself — Klaviyo
-   already computes it from real order history. Sentry's whole job
+4. Unlike Gorgias, DecisionPorter isn't inventing this score itself — Klaviyo
+   already computes it from real order history. DecisionPorter's whole job
    here is just: is this score above 0.7? If so, add the customer to
    your win-back list automatically.
 5. Profiles without enough order history for Klaviyo to have scored
@@ -51,7 +51,7 @@ easy to follow. Do these steps in order.
 1. On the dashboard, enter your Inventory Planner API key and
    Account ID (found in Inventory Planner: Account → Settings → API
    → Generate key).
-2. Sentry checks those credentials with a lightweight request before
+2. DecisionPorter checks those credentials with a lightweight request before
    saving them.
 3. Click "Check reorder urgency now" — it pulls SKUs Inventory
    Planner already recommends reordering, sorted soonest-to-stock-out
@@ -60,7 +60,7 @@ easy to follow. Do these steps in order.
 4. Unlike Gorgias and Klaviyo, there's no write-back here — Inventory
    Planner's API does not support pushing product or variant changes
    back in (confirmed directly in their docs). So this integration
-   surfaces urgent SKUs in Sentry's own decision feed rather than
+   surfaces urgent SKUs in DecisionPorter's own decision feed rather than
    writing a tag or adding to a list. That's actually what the
    original plan called for on this one ("surface in an act-today
    dashboard view"), not a limitation we're working around.
@@ -69,7 +69,7 @@ easy to follow. Do these steps in order.
 1. On the dashboard, enter your shop domain (in .myshopify.com
    format) and your Private API Token (found in Judge.me: Settings →
    Integrations → View API tokens).
-2. Sentry checks those credentials with a lightweight request before
+2. DecisionPorter checks those credentials with a lightweight request before
    saving them.
 3. Click "Check reviews now" — it pulls your recent reviews and
    flags each one:
@@ -132,7 +132,7 @@ use a real, live store to test an unfinished app.
 
 ## Step 3 — Register your app
 In the Partner Dashboard, click "Apps" → "Create app" → "Create app
-manually." Give it a name (e.g. "Sentry"). Shopify will show you an
+manually." Give it a name (e.g. "DecisionPorter"). Shopify will show you an
 **API key** and **API secret key** — copy both, you'll need them next.
 
 For "App URL" and "Allowed redirection URL(s)," you'll fill these in
@@ -145,7 +145,7 @@ tiers: Render, Railway, or Fly.io. In plain terms:
 1. Create a free account on one of those.
 2. Connect it to a GitHub repo containing these files (or upload them
    directly, depending on the host).
-3. It will give you a public URL like `https://sentry-app.onrender.com`.
+3. It will give you a public URL like `https://decisionporter-app.onrender.com`.
 
 ## Step 5 — Fill in your settings
 1. Copy `.env.example` to a new file named `.env`.
@@ -177,7 +177,7 @@ of the 3 plan buttons on the dashboard to try it.
 You'll need, at minimum:
 - A real privacy policy published at a public URL (edit
   `PRIVACY_POLICY.md` and host it somewhere, e.g. as a page on your
-  landing site) — mention that Sentry reads ticket subjects/summaries
+  landing site) — mention that DecisionPorter reads ticket subjects/summaries
   and writes tags back to Gorgias, reads and writes Klaviyo profile
   and list data, reads Inventory Planner SKU forecasts, and reads
   Judge.me review data, since all of that is real data access now

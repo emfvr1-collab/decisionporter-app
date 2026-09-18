@@ -1,5 +1,5 @@
 /**
- * SENTRY — Shopify Starter App
+ * DECISIONPORTER — Shopify Starter App
  * -----------------------------------------------------------------
  * This is a REAL, working Shopify app skeleton — not a mockup.
  * It handles:
@@ -235,7 +235,7 @@ app.get("/billing/select/:plan", async (req, res) => {
 
   const charge = {
     recurring_application_charge: {
-      name: `Sentry — ${plan.name}`,
+      name: `DecisionPorter — ${plan.name}`,
       price: plan.price,
       return_url: `${APP_URL}/billing/callback?shop=${shop}`,
       trial_days: 14,
@@ -505,7 +505,7 @@ async function fetchUrgentVariants(apiKey, accountId) {
 
 // The decision itself. Like the Klaviyo churn score, "oos" (days
 // until stockout) is Inventory Planner's own forecast, not something
-// we're guessing — Sentry's job is just turning that real number into
+// we're guessing — DecisionPorter's job is just turning that real number into
 // an urgency score and an act-today / monitor split.
 const ACT_TODAY_DAYS = 7;
 const MONITOR_WINDOW_DAYS = 30;
@@ -814,7 +814,7 @@ app.post("/api/gorgias/sync", async (req, res) => {
       let action = "Left untouched — below confidence threshold";
 
       if (decision.confidence >= CONFIDENCE_THRESHOLD) {
-        const tagName = decision.category === "escalate" ? "sentry-priority" : "sentry-routine";
+        const tagName = decision.category === "escalate" ? "decisionporter-priority" : "decisionporter-routine";
         await addGorgiasTag(config.subdomain, config.email, config.apiKey, ticket.id, tagName);
         action = `Tagged: ${tagName}`;
       } else {
@@ -870,7 +870,7 @@ app.use((err, req, res, next) => {
 db.migrate()
   .then(() => {
     app.listen(PORT, () => {
-      console.log(`Sentry starter app running on port ${PORT}`);
+      console.log(`DecisionPorter starter app running on port ${PORT}`);
       console.log(`Set APP_URL in .env to your public URL, then install via /auth?shop=your-store.myshopify.com`);
     });
   })
