@@ -88,6 +88,7 @@ app.get("/auth/callback", async (req, res) => {
         client_id: SHOPIFY_API_KEY,
         client_secret: SHOPIFY_API_SECRET,
         code,
+        expiring: "1", // request a modern expiring offline token (Shopify requirement as of 2026)
       }),
     });
     const tokenData = await tokenResponse.json();
