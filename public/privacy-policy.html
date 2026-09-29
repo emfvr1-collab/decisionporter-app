@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DecisionPorter — Privacy Policy</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #1a1a2e;
+    --muted: #5b5b70;
+    --accent: #3730a3;
+    --border: #e5e5ef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f0f1a;
+      --text: #e8e8f2;
+      --muted: #a0a0b8;
+      --accent: #a5b4fc;
+      --border: #2a2a40;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 48px 20px 80px;
+  }
+  h1 { font-size: 1.75rem; margin-bottom: 0.25rem; }
+  .updated { color: var(--muted); font-size: 0.9rem; margin-bottom: 2.5rem; }
+  h2 { font-size: 1.15rem; margin-top: 2.25rem; margin-bottom: 0.75rem; color: var(--accent); }
+  p, li { color: var(--text); }
+  ul { padding-left: 1.25rem; }
+  li { margin-bottom: 0.4rem; }
+  a { color: var(--accent); }
+  .note {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.85rem;
+    color: var(--muted);
+    font-style: italic;
+  }
+</style>
+</head>
+<body>
+  <h1>DecisionPorter — Privacy Policy</h1>
+  <div class="updated">Last updated: September 28, 2026</div>
+
+  <h2>Who we are</h2>
+  <p>DecisionPorter is provided by Decision Porter LLC, a Pennsylvania limited liability company. [ADDRESS PLACEHOLDER — Edward to fill in registered business address]</p>
+
+  <h2>What we collect</h2>
+  <p>When a store installs DecisionPorter, we collect:</p>
+  <ul>
+    <li>The store's Shopify domain and access token, so the app can function.</li>
+    <li>Once connected, data from the integrations you authorize:
+      <ul>
+        <li><strong>Gorgias:</strong> ticket subjects and summaries, used to classify priority; DecisionPorter writes a tag back to high-confidence tickets.</li>
+        <li><strong>Klaviyo:</strong> customer profile and churn-risk data, and list membership; DecisionPorter adds at-risk customers to a win-back list you choose.</li>
+        <li><strong>Inventory Planner:</strong> SKU-level reorder forecasts (read-only).</li>
+        <li><strong>Judge.me:</strong> review content and ratings (read-only).</li>
+      </ul>
+    </li>
+    <li>Only the data needed to generate a decision is retained — DecisionPorter does not store full customer records, payment details, or order history beyond what a connected integration provides.</li>
+  </ul>
+
+  <h2>What we don't do</h2>
+  <ul>
+    <li>We do not sell merchant or customer data.</li>
+    <li>We do not use store data to train models beyond what's needed to run the decision it was collected for.</li>
+  </ul>
+
+  <h2>How long we keep data</h2>
+  <p>Decision logs and connected-integration credentials are kept for as long as the app remains installed on a store. Uninstalling the app triggers Shopify's mandatory <code>app/uninstalled</code> webhook, which deletes the shop's stored data automatically.</p>
+
+  <h2>Customer-level requests</h2>
+  <p>This app does not store individual customers' personal data separately from the connected integrations themselves — it stores shop-level connection credentials and the decisions it generates. Requests under Shopify's <code>customers/data_request</code> and <code>customers/redact</code> webhooks are logged and acknowledged accordingly.</p>
+
+  <h2>Your rights</h2>
+  <p>Merchants and their customers can request a copy of, or deletion of, their data by contacting <a href="mailto:support@decisionporter.com">support@decisionporter.com</a>. This app also responds to Shopify's mandatory <code>customers/data_request</code>, <code>customers/redact</code>, and <code>shop/redact</code> webhooks automatically.</p>
+
+  <h2>Contact</h2>
+  <p><a href="mailto:support@decisionporter.com">support@decisionporter.com</a></p>
+
+  <div class="note">
+    This is a starting point, not legal advice. Consider having a lawyer review it before publishing, especially once you're handling real customer data from Gorgias, Klaviyo, Inventory Planner, or Judge.me.
+  </div>
+</body>
+</html>

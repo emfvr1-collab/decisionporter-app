@@ -1,14 +1,19 @@
 # DecisionPorter — Privacy Policy
 
-**Last updated:** September 23, 2026
+**Last updated:** September 28, 2026
 
 ## Who we are
-DecisionPorter is provided by Decision Porter LLC, a Pennsylvania limited liability company. [Add your registered business address here — required for most App Store privacy policy checks.]
+DecisionPorter is provided by Decision Porter LLC, a Pennsylvania limited liability company, located at 605 Richmond Drive, P311, Lancaster, PA 17601.
 
 ## What we collect
 When a store installs DecisionPorter, we collect:
 - The store's Shopify domain and access token, so the app can function.
-- Once connected, data from the integrations you authorize (Gorgias tickets, Klaviyo send data, Inventory Planner stock levels, Judge.me reviews) — only the data needed to generate a decision.
+- Once connected, data from the integrations you authorize:
+  - **Gorgias:** ticket subjects and summaries, used to classify priority; DecisionPorter writes a tag back to high-confidence tickets.
+  - **Klaviyo:** customer profile and churn-risk data, and list membership; DecisionPorter adds at-risk customers to a win-back list you choose.
+  - **Inventory Planner:** SKU-level reorder forecasts (read-only).
+  - **Judge.me:** review content and ratings (read-only).
+- Only the data needed to generate a decision is retained — DecisionPorter does not store full customer records, payment details, or order history beyond what a connected integration provides.
 
 ## What we don't do
 - We do not sell merchant or customer data.
