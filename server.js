@@ -22,6 +22,7 @@ const crypto = require("crypto");
 const fetch = require("node-fetch");
 const path = require("path");
 const db = require("./db");
+const { requireSessionToken, isValidShopDomain } = require("./security");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,18 +32,44 @@ const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY;
 const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
 const APP_URL = process.env.APP_URL; // e.g. https://your-app.onrender.com
 const SCOPES = "read_orders,read_products,write_products"; // adjust once you wire in real integrations
+// Shopify retires each Admin API version about a year after release,
+// so keep this current (check shopify.dev/docs/api/usage/versioning).
+const API_VERSION = "2026-07";
 
-app.use(express.json());
+// Parse JSON for everything EXCEPT /webhooks. Webhook routes need the
+// raw, unparsed body to check Shopify's signature; if this global
+// parser ran first, the raw body was gone and every webhook failed
+// verification — including the privacy webhooks Shopify tests during
+// app review.
+const parseJson = express.json();
+app.use((req, res, next) => (req.path.startsWith("/webhooks") ? next() : parseJson(req, res, next)));
 app.use("/public", express.static(path.join(__dirname, "public")));
+
+// Small cookie reader (avoids adding a dependency for one cookie).
+function readCookie(req, name) {
+  const header = req.get("Cookie") || "";
+  for (const part of header.split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k === name) return decodeURIComponent(v.join("="));
+  }
+  return null;
+}
 
 // -------------------------------------------------------------
 // STEP 1: Start install — Shopify sends the merchant here first
 // -------------------------------------------------------------
 app.get("/auth", (req, res) => {
   const shop = req.query.shop;
-  if (!shop) return res.status(400).send("Missing ?shop= parameter");
+  if (!isValidShopDomain(shop)) return res.status(400).send("Missing or invalid ?shop= parameter (expected your-store.myshopify.com)");
 
+  // Random value remembered in a short-lived cookie and checked on the
+  // way back, so nobody can trick a merchant into completing an
+  // install they didn't start.
   const state = crypto.randomBytes(16).toString("hex");
+  res.setHeader(
+    "Set-Cookie",
+    `dp_oauth_state=${state}; Max-Age=600; Path=/auth; HttpOnly; Secure; SameSite=Lax`
+  );
   const redirectUri = `${APP_URL}/auth/callback`;
 
   const installUrl =
@@ -59,8 +86,13 @@ app.get("/auth", (req, res) => {
 // STEP 2: Shopify redirects back here after the merchant approves
 // -------------------------------------------------------------
 app.get("/auth/callback", async (req, res) => {
-  const { shop, code, hmac } = req.query;
+  const { shop, code, hmac, state } = req.query;
   if (!shop || !code || !hmac) return res.status(400).send("Missing required parameters");
+  if (!isValidShopDomain(shop)) return res.status(400).send("Invalid shop domain");
+  const expectedState = readCookie(req, "dp_oauth_state");
+  if (!state || !expectedState || state !== expectedState) {
+    return res.status(403).send("Install session expired or didn't match — please start the install again.");
+  }
 
   // Verify the request really came from Shopify before trusting it
   const params = { ...req.query };
@@ -75,7 +107,11 @@ app.get("/auth/callback", async (req, res) => {
     .update(message)
     .digest("hex");
 
-  if (generatedHash !== hmac) {
+  const hmacOk =
+    typeof hmac === "string" &&
+    hmac.length === generatedHash.length &&
+    crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(generatedHash));
+  if (!hmacOk) {
     return res.status(400).send("HMAC validation failed — request did not come from Shopify");
   }
 
@@ -107,8 +143,10 @@ app.get("/auth/callback", async (req, res) => {
     return res.status(502).send("Could not reach Shopify to finish installing — please try again.");
   }
 
-  // Send the merchant into the app
-  res.redirect(`/?shop=${shop}`);
+  // Send the merchant into the app inside their Shopify admin, where
+  // App Bridge can issue session tokens for the dashboard.
+  res.setHeader("Set-Cookie", "dp_oauth_state=; Max-Age=0; Path=/auth; HttpOnly; Secure; SameSite=Lax");
+  res.redirect(`https://${shop}/admin/apps/${SHOPIFY_API_KEY}`);
 });
 
 async function registerMandatoryWebhooks(shop, accessToken) {
@@ -121,7 +159,7 @@ async function registerMandatoryWebhooks(shop, accessToken) {
 
   for (const hook of topics) {
     try {
-      await fetch(`https://${shop}/admin/api/2024-10/webhooks.json`, {
+      await fetch(`https://${shop}/admin/api/${API_VERSION}/webhooks.json`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -149,12 +187,15 @@ function verifyWebhookHmac(req) {
     return false;
   }
   try {
-    const hmacHeader = req.get("X-Shopify-Hmac-Sha256");
+    const hmacHeader = req.get("X-Shopify-Hmac-Sha256") || "";
     const generatedHash = crypto
       .createHmac("sha256", SHOPIFY_API_SECRET)
       .update(req.rawBody || "", "utf8")
       .digest("base64");
-    return hmacHeader === generatedHash;
+    return (
+      hmacHeader.length === generatedHash.length &&
+      crypto.timingSafeEqual(Buffer.from(hmacHeader), Buffer.from(generatedHash))
+    );
   } catch (err) {
     console.error("verifyWebhookHmac failed:", err.message);
     return false;
@@ -217,62 +258,124 @@ app.post("/webhooks/shop/redact", async (req, res) => {
 });
 
 // -------------------------------------------------------------
-// BILLING: create a recurring charge for one of your 3 plans
+// BILLING: recurring subscription for one of your 3 plans
 // -------------------------------------------------------------
+// Uses Shopify's GraphQL Billing API (appSubscriptionCreate). Flow:
+//   1. Dashboard calls POST /api/billing/subscribe (signed in).
+//   2. We ask Shopify for a subscription and get a confirmation URL.
+//   3. The dashboard sends the merchant's whole browser tab there.
+//   4. After they approve, Shopify sends them to /billing/callback,
+//      where we ask Shopify which subscription is ACTUALLY active and
+//      save that plan — we never trust the URL alone.
 const PLANS = {
-  starter: { name: "Starter", price: "29.00" },
-  growth: { name: "Growth", price: "79.00" },
-  scale: { name: "Scale", price: "199.00" },
+  starter: { name: "Starter", price: 29.0 },
+  growth: { name: "Growth", price: 79.0 },
+  scale: { name: "Scale", price: 199.0 },
 };
+const TRIAL_DAYS = 14;
 
-app.get("/billing/select/:plan", async (req, res) => {
-  const { shop } = req.query;
-  const plan = PLANS[req.params.plan];
-  if (!shop || !plan) return res.status(400).send("Missing shop or unknown plan");
+// Turns a Shopify subscription name back into our plan key.
+function planKeyFromSubscriptionName(name) {
+  const entry = Object.entries(PLANS).find(([, p]) => `DecisionPorter — ${p.name}` === name);
+  return entry ? entry[0] : null;
+}
+
+async function shopifyGraphql(shop, accessToken, query, variables) {
+  const response = await fetch(`https://${shop}/admin/api/${API_VERSION}/graphql.json`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!response.ok) throw new Error(`Shopify returned ${response.status}`);
+  const data = await response.json();
+  if (data.errors) throw new Error(data.errors.map((e) => e.message).join("; "));
+  return data.data;
+}
+
+async function fetchActiveSubscription(shop, accessToken) {
+  const data = await shopifyGraphql(
+    shop,
+    accessToken,
+    `query { currentAppInstallation { activeSubscriptions { id name status trialDays } } }`
+  );
+  const subs = (data.currentAppInstallation && data.currentAppInstallation.activeSubscriptions) || [];
+  return subs.find((s) => s.status === "ACTIVE") || null;
+}
+
+// Every /api route below this line requires a valid session token and
+// uses the shop FROM THE TOKEN (req.shop), never from the request.
+app.use("/api", requireSessionToken({ apiKey: SHOPIFY_API_KEY, apiSecret: SHOPIFY_API_SECRET }));
+
+app.get("/api/billing/status", async (req, res) => {
+  const shopData = await db.getShop(req.shop);
+  res.json({ ok: true, plan: (shopData && shopData.plan) || null });
+});
+
+app.post("/api/billing/subscribe", async (req, res) => {
+  const shop = req.shop;
+  const planKey = req.body && req.body.plan;
+  const plan = PLANS[planKey];
+  if (!plan) return res.status(400).json({ ok: false, error: "Unknown plan" });
 
   const shopData = await db.getShop(shop);
-  const accessToken = shopData && shopData.accessToken;
-  if (!accessToken) return res.status(401).send("Shop not installed");
-
-  const charge = {
-    recurring_application_charge: {
-      name: `DecisionPorter — ${plan.name}`,
-      price: plan.price,
-      return_url: `${APP_URL}/billing/callback?shop=${shop}`,
-      trial_days: 14,
-      test: process.env.BILLING_TEST_MODE === "true", // keep true until you launch for real
-    },
-  };
+  if (!shopData || !shopData.accessToken) return res.status(401).json({ ok: false, error: "Install the app on this store first" });
 
   try {
-    const response = await fetch(
-      `https://${shop}/admin/api/2024-10/recurring_application_charges.json`,
+    const data = await shopifyGraphql(
+      shop,
+      shopData.accessToken,
+      `mutation Subscribe($name: String!, $returnUrl: URL!, $trialDays: Int, $test: Boolean, $lineItems: [AppSubscriptionLineItemInput!]!) {
+        appSubscriptionCreate(name: $name, returnUrl: $returnUrl, trialDays: $trialDays, test: $test, lineItems: $lineItems) {
+          confirmationUrl
+          userErrors { field message }
+        }
+      }`,
       {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Shopify-Access-Token": accessToken,
-        },
-        body: JSON.stringify(charge),
+        name: `DecisionPorter — ${plan.name}`,
+        returnUrl: `${APP_URL}/billing/callback?shop=${encodeURIComponent(shop)}`,
+        trialDays: TRIAL_DAYS,
+        test: process.env.BILLING_TEST_MODE === "true", // keep true until you launch for real
+        lineItems: [
+          {
+            plan: {
+              appRecurringPricingDetails: {
+                price: { amount: plan.price, currencyCode: "USD" },
+                interval: "EVERY_30_DAYS",
+              },
+            },
+          },
+        ],
       }
     );
-    const data = await response.json();
-
-    if (data.recurring_application_charge && data.recurring_application_charge.confirmation_url) {
-      res.redirect(data.recurring_application_charge.confirmation_url);
-    } else {
-      res.status(500).json(data);
+    const result = data.appSubscriptionCreate;
+    if (result.userErrors && result.userErrors.length) {
+      return res.status(400).json({ ok: false, error: result.userErrors.map((e) => e.message).join("; ") });
     }
+    res.json({ ok: true, confirmationUrl: result.confirmationUrl });
   } catch (err) {
-    console.error("Billing charge failed:", err.message);
-    res.status(502).send("Could not reach Shopify to set up billing — please try again.");
+    console.error("Billing subscription failed:", err.message);
+    res.status(502).json({ ok: false, error: "Could not reach Shopify to set up billing — please try again." });
   }
 });
 
-app.get("/billing/callback", (req, res) => {
-  // Shopify sends the merchant back here after they approve the charge.
-  // In a real app, you'd activate the charge_id via the Admin API here.
-  res.redirect(`/?shop=${req.query.shop}&billing=confirmed`);
+// Shopify sends the merchant here (top-level, no session token) after
+// they approve or decline the charge. The ?shop= value is only used to
+// look up which store to ask; the plan we save comes from Shopify.
+app.get("/billing/callback", async (req, res) => {
+  const shop = req.query.shop;
+  if (!isValidShopDomain(shop)) return res.status(400).send("Invalid shop");
+
+  const shopData = await db.getShop(shop);
+  if (!shopData || !shopData.accessToken) return res.status(401).send("Shop not installed");
+
+  try {
+    const active = await fetchActiveSubscription(shop, shopData.accessToken);
+    const planKey = active ? planKeyFromSubscriptionName(active.name) : null;
+    await db.saveShop(shop, { plan: planKey, subscriptionId: active ? active.id : null });
+  } catch (err) {
+    console.error("Could not confirm subscription:", err.message);
+  }
+  res.redirect(`https://${shop}/admin/apps/${SHOPIFY_API_KEY}`);
 });
 
 // -------------------------------------------------------------
@@ -598,16 +701,17 @@ function judgeMeAction(evalResult) {
 // Judge.me routes: connect, check status, and run a sync
 // -------------------------------------------------------------
 app.get("/api/judgeme/status", async (req, res) => {
-  const { shop } = req.query;
+  const shop = req.shop;
   const shopData = await db.getShop(shop);
   const connected = !!(shopData && shopData.judgeMe);
   res.json({ connected });
 });
 
 app.post("/api/judgeme/connect", async (req, res) => {
-  const { shop, shopDomain, apiToken } = req.body;
-  if (!shop || !shopDomain || !apiToken) {
-    return res.status(400).json({ ok: false, error: "Missing shop, shopDomain, or apiToken" });
+  const shop = req.shop;
+  const { shopDomain, apiToken } = req.body;
+  if (!shopDomain || !apiToken) {
+    return res.status(400).json({ ok: false, error: "Missing shopDomain or apiToken" });
   }
 
   const valid = await verifyJudgeMeCredentials(shopDomain, apiToken);
@@ -622,7 +726,7 @@ app.post("/api/judgeme/connect", async (req, res) => {
 });
 
 app.post("/api/judgeme/sync", async (req, res) => {
-  const { shop } = req.body;
+  const shop = req.shop;
   const shopData = await db.getShop(shop);
   const config = shopData && shopData.judgeMe;
   if (!config) return res.status(400).json({ ok: false, error: "Judge.me isn't connected for this shop yet" });
@@ -654,16 +758,17 @@ app.post("/api/judgeme/sync", async (req, res) => {
 
 // -------------------------------------------------------------
 app.get("/api/inventory-planner/status", async (req, res) => {
-  const { shop } = req.query;
+  const shop = req.shop;
   const shopData = await db.getShop(shop);
   const connected = !!(shopData && shopData.inventoryPlanner);
   res.json({ connected });
 });
 
 app.post("/api/inventory-planner/connect", async (req, res) => {
-  const { shop, apiKey, accountId } = req.body;
-  if (!shop || !apiKey || !accountId) {
-    return res.status(400).json({ ok: false, error: "Missing shop, apiKey, or accountId" });
+  const shop = req.shop;
+  const { apiKey, accountId } = req.body;
+  if (!apiKey || !accountId) {
+    return res.status(400).json({ ok: false, error: "Missing apiKey or accountId" });
   }
 
   const valid = await verifyInventoryPlannerCredentials(apiKey, accountId);
@@ -678,7 +783,7 @@ app.post("/api/inventory-planner/connect", async (req, res) => {
 });
 
 app.post("/api/inventory-planner/sync", async (req, res) => {
-  const { shop } = req.body;
+  const shop = req.shop;
   const shopData = await db.getShop(shop);
   const config = shopData && shopData.inventoryPlanner;
   if (!config) return res.status(400).json({ ok: false, error: "Inventory Planner isn't connected for this shop yet" });
@@ -708,16 +813,17 @@ app.post("/api/inventory-planner/sync", async (req, res) => {
 
 // -------------------------------------------------------------
 app.get("/api/klaviyo/status", async (req, res) => {
-  const { shop } = req.query;
+  const shop = req.shop;
   const shopData = await db.getShop(shop);
   const connected = !!(shopData && shopData.klaviyo);
   res.json({ connected });
 });
 
 app.post("/api/klaviyo/connect", async (req, res) => {
-  const { shop, apiKey, winbackListId } = req.body;
-  if (!shop || !apiKey || !winbackListId) {
-    return res.status(400).json({ ok: false, error: "Missing shop, apiKey, or winbackListId" });
+  const shop = req.shop;
+  const { apiKey, winbackListId } = req.body;
+  if (!apiKey || !winbackListId) {
+    return res.status(400).json({ ok: false, error: "Missing apiKey or winbackListId" });
   }
 
   const valid = await verifyKlaviyoCredentials(apiKey);
@@ -732,7 +838,7 @@ app.post("/api/klaviyo/connect", async (req, res) => {
 });
 
 app.post("/api/klaviyo/sync", async (req, res) => {
-  const { shop } = req.body;
+  const shop = req.shop;
   const shopData = await db.getShop(shop);
   const config = shopData && shopData.klaviyo;
   if (!config) return res.status(400).json({ ok: false, error: "Klaviyo isn't connected for this shop yet" });
@@ -777,16 +883,17 @@ app.post("/api/klaviyo/sync", async (req, res) => {
 const CONFIDENCE_THRESHOLD = 0.85;
 
 app.get("/api/gorgias/status", async (req, res) => {
-  const { shop } = req.query;
+  const shop = req.shop;
   const shopData = await db.getShop(shop);
   const connected = !!(shopData && shopData.gorgias);
   res.json({ connected });
 });
 
 app.post("/api/gorgias/connect", async (req, res) => {
-  const { shop, subdomain, email, apiKey } = req.body;
-  if (!shop || !subdomain || !email || !apiKey) {
-    return res.status(400).json({ ok: false, error: "Missing shop, subdomain, email, or apiKey" });
+  const shop = req.shop;
+  const { subdomain, email, apiKey } = req.body;
+  if (!subdomain || !email || !apiKey) {
+    return res.status(400).json({ ok: false, error: "Missing subdomain, email, or apiKey" });
   }
 
   const valid = await verifyGorgiasCredentials(subdomain, email, apiKey);
@@ -801,7 +908,7 @@ app.post("/api/gorgias/connect", async (req, res) => {
 });
 
 app.post("/api/gorgias/sync", async (req, res) => {
-  const { shop } = req.body;
+  const shop = req.shop;
   const shopData = await db.getShop(shop);
   const config = shopData && shopData.gorgias;
   if (!config) return res.status(400).json({ ok: false, error: "Gorgias isn't connected for this shop yet" });
@@ -839,8 +946,16 @@ app.post("/api/gorgias/sync", async (req, res) => {
 // -------------------------------------------------------------
 // The embedded admin dashboard the merchant actually sees
 // -------------------------------------------------------------
+// The page is read once at startup and the app's public API key is
+// filled in so App Bridge can start. (The API key is public; the
+// SECRET never goes to the browser.)
+const fs = require("fs");
+const DASHBOARD_HTML = fs
+  .readFileSync(path.join(__dirname, "public", "index.html"), "utf8")
+  .replace("__SHOPIFY_API_KEY__", String(SHOPIFY_API_KEY || "").replace(/[^A-Za-z0-9_-]/g, ""));
+
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
+  res.type("html").send(DASHBOARD_HTML);
 });
 
 // Sample decision data for the dashboard — replace with real calls

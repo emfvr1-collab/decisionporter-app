@@ -2,6 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<!-- Shopify App Bridge: must be the first script on the page. It gives
+     the dashboard short-lived session tokens that prove to our server
+     which store is signed in. The server fills in the API key. -->
+<meta name="shopify-api-key" content="__SHOPIFY_API_KEY__">
+<script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DecisionPorter</title>
 <style>
@@ -177,10 +182,34 @@
     return params.get('shop') || '';
   }
 
+  // Every call to our server goes through this: it attaches a fresh
+  // session token from App Bridge so the server knows which store is
+  // signed in (the server ignores any "shop" we send ourselves).
+  function authFetch(url, options) {
+    options = options || {};
+    return shopify.idToken().then(function(token) {
+      var headers = Object.assign({}, options.headers || {}, { Authorization: 'Bearer ' + token });
+      return fetch(url, Object.assign({}, options, { headers: headers }));
+    });
+  }
+
   function selectPlan(plan) {
-    var shop = getShop();
-    if (!shop) { alert('Missing shop parameter — open this app from inside Shopify admin.'); return; }
-    window.location.href = '/billing/select/' + plan + '?shop=' + shop;
+    authFetch('/api/billing/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan: plan })
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.ok && data.confirmationUrl) {
+          // Shopify's approval page must open in the whole tab, not
+          // inside the app's frame.
+          window.open(data.confirmationUrl, '_top');
+        } else {
+          alert(data.error || 'Could not start billing.');
+        }
+      })
+      .catch(function() { alert('Network error — please try again.'); });
   }
 
   function confidenceClass(c) {
@@ -201,13 +230,23 @@
       body.innerHTML = '<tr><td colspan="4">Connect a tool above, then sync it.</td></tr>';
       return;
     }
+    // Cells are filled with textContent, never innerHTML: ticket
+    // subjects, reviewer names and emails come from customers, and a
+    // customer could otherwise plant a script that runs in the admin.
     all.forEach(function(row) {
       var tr = document.createElement('tr');
-      tr.innerHTML =
-        '<td>' + row.source + '</td>' +
-        '<td>' + row.item + '</td>' +
-        '<td class="' + confidenceClass(row.confidence) + '">' + row.confidence.toFixed(2) + '</td>' +
-        '<td>' + row.action + '</td>';
+      var cells = [
+        [String(row.source), ''],
+        [String(row.item), ''],
+        [Number(row.confidence).toFixed(2), confidenceClass(row.confidence)],
+        [String(row.action), '']
+      ];
+      cells.forEach(function(c) {
+        var td = document.createElement('td');
+        td.textContent = c[0];
+        if (c[1]) td.className = c[1];
+        tr.appendChild(td);
+      });
       body.appendChild(tr);
     });
   }
@@ -216,7 +255,7 @@
   function checkGorgiasStatus() {
     var shop = getShop();
     if (!shop) return;
-    fetch('/api/gorgias/status?shop=' + encodeURIComponent(shop))
+    authFetch('/api/gorgias/status?shop=' + encodeURIComponent(shop))
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data.connected) {
@@ -243,7 +282,7 @@
     statusEl.textContent = 'Checking credentials with Gorgias…';
     statusEl.className = 'status-msg';
 
-    fetch('/api/gorgias/connect', {
+    authFetch('/api/gorgias/connect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shop: shop, subdomain: subdomain, email: email, apiKey: apiKey })
@@ -277,7 +316,7 @@
     statusEl.textContent = 'Fetching open tickets from Gorgias…';
     statusEl.className = 'status-msg';
 
-    fetch('/api/gorgias/sync', {
+    authFetch('/api/gorgias/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shop: shop })
@@ -306,7 +345,7 @@
   function checkKlaviyoStatus() {
     var shop = getShop();
     if (!shop) return;
-    fetch('/api/klaviyo/status?shop=' + encodeURIComponent(shop))
+    authFetch('/api/klaviyo/status?shop=' + encodeURIComponent(shop))
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data.connected) {
@@ -332,7 +371,7 @@
     statusEl.textContent = 'Checking credentials with Klaviyo…';
     statusEl.className = 'status-msg';
 
-    fetch('/api/klaviyo/connect', {
+    authFetch('/api/klaviyo/connect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shop: shop, apiKey: apiKey, winbackListId: winbackListId })
@@ -366,7 +405,7 @@
     statusEl.textContent = 'Checking churn risk with Klaviyo…';
     statusEl.className = 'status-msg';
 
-    fetch('/api/klaviyo/sync', {
+    authFetch('/api/klaviyo/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shop: shop })
@@ -395,7 +434,7 @@
   function checkIPStatus() {
     var shop = getShop();
     if (!shop) return;
-    fetch('/api/inventory-planner/status?shop=' + encodeURIComponent(shop))
+    authFetch('/api/inventory-planner/status?shop=' + encodeURIComponent(shop))
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data.connected) {
@@ -421,7 +460,7 @@
     statusEl.textContent = 'Checking credentials with Inventory Planner…';
     statusEl.className = 'status-msg';
 
-    fetch('/api/inventory-planner/connect', {
+    authFetch('/api/inventory-planner/connect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shop: shop, apiKey: apiKey, accountId: accountId })
@@ -455,7 +494,7 @@
     statusEl.textContent = 'Checking reorder urgency with Inventory Planner…';
     statusEl.className = 'status-msg';
 
-    fetch('/api/inventory-planner/sync', {
+    authFetch('/api/inventory-planner/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shop: shop })
@@ -484,7 +523,7 @@
   function checkJMStatus() {
     var shop = getShop();
     if (!shop) return;
-    fetch('/api/judgeme/status?shop=' + encodeURIComponent(shop))
+    authFetch('/api/judgeme/status?shop=' + encodeURIComponent(shop))
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data.connected) {
@@ -510,7 +549,7 @@
     statusEl.textContent = 'Checking credentials with Judge.me…';
     statusEl.className = 'status-msg';
 
-    fetch('/api/judgeme/connect', {
+    authFetch('/api/judgeme/connect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shop: shop, shopDomain: shopDomain, apiToken: apiToken })
@@ -544,7 +583,7 @@
     statusEl.textContent = 'Fetching reviews from Judge.me…';
     statusEl.className = 'status-msg';
 
-    fetch('/api/judgeme/sync', {
+    authFetch('/api/judgeme/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shop: shop })

@@ -14,12 +14,24 @@
  * way — including all 4 integrations connecting at once — with zero
  * failures.
  *
- * Requires DATABASE_URL in your environment (Render and Railway both
+ * Secrets (the Shopify access token and every integration's API
+ * keys) are encrypted before they're written — see security.js.
+ *
+ * Requires DATABASE_URL and ENCRYPTION_KEY in your environment (Render and Railway both
  * hand you one automatically when you add their free Postgres addon).
  * -----------------------------------------------------------------
  */
 
 const { Pool } = require("pg");
+const { loadEncryptionKey, encrypt, decrypt, isEncrypted } = require("./security");
+
+// Loaded once at startup in migrate(). Every secret column below is
+// encrypted with it before it's written and decrypted after it's read.
+let encryptionKey = null;
+function key() {
+  if (!encryptionKey) encryptionKey = loadEncryptionKey();
+  return encryptionKey;
+}
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -32,6 +44,7 @@ const pool = new Pool({
 });
 
 async function migrate() {
+  key(); // fail fast at startup if ENCRYPTION_KEY is missing or wrong
   await pool.query(`
     CREATE TABLE IF NOT EXISTS shops (
       shop TEXT PRIMARY KEY,
@@ -43,6 +56,29 @@ async function migrate() {
       judge_me JSONB
     );
   `);
+  // Billing: which plan the shop is on, and Shopify's subscription ID.
+  await pool.query(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS plan TEXT`);
+  await pool.query(`ALTER TABLE shops ADD COLUMN IF NOT EXISTS subscription_id TEXT`);
+  await encryptExistingRows();
+}
+
+// One-time upgrade for rows saved before encryption existed: re-save
+// any plain-text secret so it's stored encrypted. Safe to run on
+// every startup — rows that are already encrypted are skipped.
+async function encryptExistingRows() {
+  const result = await pool.query("SELECT * FROM shops");
+  for (const row of result.rows) {
+    const updates = {};
+    for (const [field, column] of Object.entries(COLUMN_MAP)) {
+      if (!SECRET_FIELDS.has(field)) continue;
+      const value = row[column];
+      if (value !== null && value !== undefined && !isEncrypted(value)) updates[field] = value;
+    }
+    if (Object.keys(updates).length) {
+      await saveShop(row.shop, updates);
+      console.log(`Encrypted stored credentials for ${row.shop}`);
+    }
+  }
 }
 
 // Returns the same shape server.js already expects: an object keyed
@@ -52,12 +88,14 @@ async function getShop(shop) {
   if (result.rows.length === 0) return null;
   const row = result.rows[0];
   return {
-    accessToken: row.access_token,
+    accessToken: decrypt(row.access_token, key()),
     installedAt: row.installed_at,
-    gorgias: row.gorgias,
-    klaviyo: row.klaviyo,
-    inventoryPlanner: row.inventory_planner,
-    judgeMe: row.judge_me,
+    gorgias: decrypt(row.gorgias, key()),
+    klaviyo: decrypt(row.klaviyo, key()),
+    inventoryPlanner: decrypt(row.inventory_planner, key()),
+    judgeMe: decrypt(row.judge_me, key()),
+    plan: row.plan,
+    subscriptionId: row.subscription_id,
   };
 }
 
@@ -80,18 +118,26 @@ const COLUMN_MAP = {
   klaviyo: "klaviyo",
   inventoryPlanner: "inventory_planner",
   judgeMe: "judge_me",
+  plan: "plan",
+  subscriptionId: "subscription_id",
 };
 const JSONB_FIELDS = new Set(["gorgias", "klaviyo", "inventoryPlanner", "judgeMe"]);
+// Encrypted before saving. For the JSONB columns the stored value is
+// the encrypted string (a valid JSON string), not the readable object.
+const SECRET_FIELDS = new Set(["accessToken", "gorgias", "klaviyo", "inventoryPlanner", "judgeMe"]);
 
 async function saveShop(shop, data) {
   const touchedColumns = [];
   const values = [shop];
 
-  for (const [key, column] of Object.entries(COLUMN_MAP)) {
-    if (!Object.prototype.hasOwnProperty.call(data, key)) continue;
+  for (const [field, column] of Object.entries(COLUMN_MAP)) {
+    if (!Object.prototype.hasOwnProperty.call(data, field)) continue;
     touchedColumns.push(column);
-    const value = data[key];
-    values.push(JSONB_FIELDS.has(key) && value !== null ? JSON.stringify(value) : value);
+    let value = data[field];
+    if (SECRET_FIELDS.has(field) && value !== null && value !== undefined) {
+      value = isEncrypted(value) ? value : encrypt(value, key());
+    }
+    values.push(JSONB_FIELDS.has(field) && value !== null && value !== undefined ? JSON.stringify(value) : value);
   }
 
   if (touchedColumns.length === 0) return; // nothing to do

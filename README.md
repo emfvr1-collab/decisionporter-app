@@ -19,6 +19,25 @@ easy to follow. Do these steps in order.
   need a founder reply, which are photo-feature candidates, and
   which look worth a manual spam check — all surfaced in the feed
 
+## Security (read before submitting to the App Store)
+- **Who's signed in:** the dashboard loads Shopify App Bridge, which
+  gives it a short-lived session token signed with your API secret.
+  Every `/api/...` route checks that token and uses the store named
+  *inside it* — any `shop` sent in the URL or body is ignored. So the
+  dashboard only works when opened from inside the Shopify admin.
+- **Stored secrets are encrypted:** the Shopify access token and every
+  integration's API keys are encrypted (AES-256-GCM) before they're
+  saved, using `ENCRYPTION_KEY`. Rows saved by older versions are
+  encrypted automatically the next time the app starts.
+- **Install flow:** the shop domain must be a real `*.myshopify.com`
+  address, and a one-time `state` value (kept in a cookie) must match
+  on the way back from Shopify.
+- **Webhooks:** verified against the raw request body, so Shopify's
+  signatures actually match (earlier versions rejected every webhook).
+- **Billing:** uses Shopify's GraphQL `appSubscriptionCreate`. After
+  the merchant approves, the app asks Shopify which subscription is
+  really active and saves that plan in the `plan` column.
+
 ## How the Gorgias part actually works
 1. On the dashboard, enter your Gorgias subdomain, agent email, and
    API key. Find these in Gorgias: **Settings → REST API** — click
