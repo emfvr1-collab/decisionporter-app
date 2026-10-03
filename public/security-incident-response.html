@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DecisionPorter — Security Incident Response</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #1a1a2e;
+    --muted: #5b5b70;
+    --accent: #3730a3;
+    --border: #e5e5ef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f0f1a;
+      --text: #e8e8f2;
+      --muted: #a0a0b8;
+      --accent: #a5b4fc;
+      --border: #2a2a40;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 48px 20px 80px;
+  }
+  h1 { font-size: 1.75rem; margin-bottom: 0.25rem; }
+  .updated { color: var(--muted); font-size: 0.9rem; margin-bottom: 2.5rem; }
+  h2 { font-size: 1.15rem; margin-top: 2.25rem; margin-bottom: 0.75rem; color: var(--accent); }
+  p, li { color: var(--text); }
+  ul { padding-left: 1.25rem; }
+  li { margin-bottom: 0.4rem; }
+  a { color: var(--accent); }
+  .note {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.85rem;
+    color: var(--muted);
+    font-style: italic;
+  }
+</style>
+</head>
+<body>
+  <h1>DecisionPorter — Security Incident Response Policy</h1>
+  <div class="updated">Last updated: October 2, 2026 · Reviewed at least once a year</div>
+
+  <p>This policy describes how Decision Porter LLC detects, handles and reports security incidents affecting the DecisionPorter app, including any unauthorized access to, or loss of, merchant or customer data.</p>
+
+  <h2>Roles</h2>
+  <ul>
+    <li><strong>Incident lead:</strong> Edward Rainsford, Founder, Decision Porter LLC. Responsible for every step below and for decisions to notify.</li>
+    <li><strong>Reporting address:</strong> <a href="mailto:support@decisionporter.com">support@decisionporter.com</a>. Anyone, including merchants and security researchers, can report a suspected incident here.</li>
+  </ul>
+
+  <h2>1. Detect and record</h2>
+  <ul>
+    <li>Sources: hosting and error logs, the app's access log, alerts from Render, GitHub, Shopify or connected services, and reports to the address above.</li>
+    <li>Every suspected incident is recorded with the time it was found, what was observed and who reported it.</li>
+  </ul>
+
+  <h2>2. Contain (target: within 24 hours of detection)</h2>
+  <ul>
+    <li>Stop affected processing: set <code>DISABLE_SCHEDULER=true</code> or suspend the service on Render.</li>
+    <li>Rotate exposed credentials: the Shopify API secret, the database password, and any affected Gorgias, Klaviyo, Inventory Planner or Judge.me keys (merchants are asked to regenerate theirs).</li>
+    <li>If the encryption key may be exposed, generate a new key and re-encrypt stored secrets before restarting.</li>
+    <li>Revoke access for any compromised account and enforce two-factor sign-in on Render, GitHub and Shopify Partners.</li>
+  </ul>
+
+  <h2>3. Assess</h2>
+  <ul>
+    <li>Determine which stores and which data were affected, using the access log, database records and hosting logs.</li>
+    <li>Decide whether personal data was accessed, changed, lost or disclosed.</li>
+  </ul>
+
+  <h2>4. Notify</h2>
+  <ul>
+    <li><strong>Affected merchants:</strong> without undue delay, and within 72 hours of confirming that their data was affected. The notice states what happened, which data, what we have done and what they should do.</li>
+    <li><strong>Shopify:</strong> through Shopify Partner Support, without undue delay, when Shopify merchant or customer data is involved.</li>
+    <li><strong>Authorities or individuals:</strong> where the law requires, or to support merchants in meeting their own obligations.</li>
+  </ul>
+
+  <h2>5. Recover</h2>
+  <ul>
+    <li>Fix the cause, restore from backup if data was lost, verify the fix, and resume processing.</li>
+  </ul>
+
+  <h2>6. Review</h2>
+  <ul>
+    <li>Within 14 days, write a short post-incident review: timeline, cause, impact, and changes made to prevent a repeat.</li>
+    <li>This policy is reviewed and walked through at least once a year, and after every incident.</li>
+  </ul>
+</body>
+</html>
