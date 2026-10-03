@@ -92,6 +92,27 @@ if (!url) {
     assert.equal((await db.customerDataSummary(SHOP, "other@x.com")).decisions, 1);
   });
 
+  test("retention purge deletes expired rows only, never active holds", async () => {
+    const old = new Date(Date.now() - 100 * 864e5);
+    await db.store.logDecision({ shop: SHOP, createdAt: old, rule: "old", status: "applied", mode: "live", customerEmail: "old@x.com" });
+    await db.store.logDecision({ shop: SHOP, rule: "new", status: "applied", mode: "live", customerEmail: "new@x.com" });
+    await db.store.createHold({ shop: SHOP, customerEmail: "active@x.com", ticketIds: [1], mode: "live", startedAt: old });
+    await db.store.createHold({ shop: SHOP, customerEmail: "gone@x.com", ticketIds: [2], mode: "live", startedAt: old });
+    const gone = (await db.store.listActiveHolds(SHOP)).find((h) => h.customerEmail === "gone@x.com");
+    await db.store.releaseHold({ shop: SHOP, holdId: gone.id, releasedAt: old, reason: "test" });
+    await db.store.addSkuSignal({ shop: SHOP, productId: "P9", ticketId: "T9", signal: "sizing", createdAt: old });
+    await db.pool.query("INSERT INTO access_log (shop, at, actor, action) VALUES ($1, $2, 'x', 'old')", [SHOP, new Date(Date.now() - 400 * 864e5)]);
+    await db.logAccess({ shop: SHOP, actor: "x", action: "new" });
+
+    const r = await db.purgeExpired();
+    assert.ok(r.decisions >= 1 && r.holds >= 1 && r.skuSignals >= 1 && r.accessLog >= 1);
+    const rules = (await db.listDecisions(SHOP)).map((d) => d.rule);
+    assert.ok(rules.includes("new") && !rules.includes("old"));
+    assert.deepEqual((await db.store.listActiveHolds(SHOP)).map((h) => h.customerEmail), ["active@x.com"]);
+    assert.equal(await db.store.hasSkuSignalForTicket({ shop: SHOP, ticketId: "T9" }), false);
+    assert.deepEqual((await db.listAccessLog(SHOP)).map((a) => a.action), ["new"]);
+  });
+
   test("deleteShop removes everything for the shop", async () => {
     await db.deleteShop(SHOP);
     assert.equal(await db.getShop(SHOP), null);

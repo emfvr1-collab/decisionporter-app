@@ -111,6 +111,17 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (shop, ticket_id, product_id)
     )`);
+  // Who accessed personal data, and when (Shopify protected-customer-data
+  // requirement). Kept for ACCESS_LOG_RETENTION_DAYS.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS access_log (
+      id BIGSERIAL PRIMARY KEY,
+      shop TEXT NOT NULL,
+      at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      actor TEXT NOT NULL,
+      action TEXT NOT NULL
+    )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS access_log_shop_at ON access_log (shop, at DESC)`);
   await encryptExistingRows();
 }
 
@@ -224,6 +235,7 @@ async function deleteShop(shop) {
   await pool.query("DELETE FROM decisions WHERE shop = $1", [shop]);
   await pool.query("DELETE FROM holds WHERE shop = $1", [shop]);
   await pool.query("DELETE FROM sku_signals WHERE shop = $1", [shop]);
+  await pool.query("DELETE FROM access_log WHERE shop = $1", [shop]);
   await pool.query("DELETE FROM shops WHERE shop = $1", [shop]);
 }
 
@@ -329,6 +341,38 @@ async function activeHoldEmails(shop) {
   return new Set(r.rows.map((x) => x.customer_email));
 }
 
+// ---------- Retention ----------
+// Personal data is not kept longer than needed: decision-log entries,
+// released holds and product-complaint signals are deleted after
+// RETENTION_DAYS (default 90); the access log after
+// ACCESS_LOG_RETENTION_DAYS (default 365). Active holds are never purged
+// here: they are released (and become purgeable) by the engine within
+// maxHoldDays.
+const RETENTION_DAYS = Math.max(31, Number(process.env.RETENTION_DAYS) || 90);
+const ACCESS_LOG_RETENTION_DAYS = Math.max(90, Number(process.env.ACCESS_LOG_RETENTION_DAYS) || 365);
+
+async function purgeExpired({ now = new Date(), days = RETENTION_DAYS, accessLogDays = ACCESS_LOG_RETENTION_DAYS } = {}) {
+  const cutoff = new Date(now.getTime() - days * 864e5);
+  const logCutoff = new Date(now.getTime() - accessLogDays * 864e5);
+  const d = await pool.query("DELETE FROM decisions WHERE created_at < $1", [cutoff]);
+  const h = await pool.query("DELETE FROM holds WHERE released_at IS NOT NULL AND released_at < $1", [cutoff]);
+  const s = await pool.query("DELETE FROM sku_signals WHERE created_at < $1", [cutoff]);
+  const a = await pool.query("DELETE FROM access_log WHERE at < $1", [logCutoff]);
+  return { decisions: d.rowCount, holds: h.rowCount, skuSignals: s.rowCount, accessLog: a.rowCount };
+}
+
+// ---------- Access log ----------
+async function logAccess({ shop, actor, action }) {
+  await pool.query("INSERT INTO access_log (shop, actor, action) VALUES ($1, $2, $3)",
+    [shop, String(actor || "unknown").slice(0, 100), String(action).slice(0, 200)]);
+}
+
+async function listAccessLog(shop, limit = 100) {
+  const r = await pool.query("SELECT at, actor, action FROM access_log WHERE shop = $1 ORDER BY at DESC, id DESC LIMIT $2",
+    [shop, Math.min(500, Math.max(1, limit))]);
+  return r.rows;
+}
+
 // ---------- Privacy (GDPR) webhooks ----------
 async function customerDataSummary(shop, email) {
   const e = String(email || "").trim().toLowerCase();
@@ -348,4 +392,5 @@ module.exports = {
   pool, migrate, getShop, saveShop, deleteShop, listShopsForCycle,
   store, listDecisions, decisionSummary, activeHoldEmails,
   customerDataSummary, redactCustomer,
+  purgeExpired, logAccess, listAccessLog, RETENTION_DAYS, ACCESS_LOG_RETENTION_DAYS,
 };

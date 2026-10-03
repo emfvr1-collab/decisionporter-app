@@ -102,6 +102,14 @@ if (!url) {
     assert.equal(s.counts[0].n, 1);
   });
 
+  test("viewing customer data is recorded in the access log with the staff user", async () => {
+    await api("/api/decisions");
+    await api("/api/settings"); // a plain settings read is not logged
+    const log = (await (await api("/api/access-log")).json()).entries;
+    assert.ok(log.some((e) => e.action === "GET /api/decisions" && e.actor === "shopify-user:1"));
+    assert.ok(!log.some((e) => e.action === "GET /api/settings"));
+  });
+
   test("privacy webhooks verify the signature and erase customer data", async () => {
     assert.equal((await webhook("customers/redact", { shop_domain: SHOP, customer: { email: "c@x.com" } }, false)).status, 401);
     assert.equal((await webhook("customers/data_request", { shop_domain: SHOP, customer: { email: "c@x.com" }, data_request: { id: 1 } })).status, 200);

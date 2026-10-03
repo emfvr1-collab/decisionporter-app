@@ -98,8 +98,10 @@ function requireSessionToken({ apiKey, apiSecret }) {
     const match = auth.match(/^Bearer (.+)$/);
     if (!match) return res.status(401).json({ ok: false, error: "Not signed in — open DecisionPorter from your Shopify admin." });
     try {
-      const { shop } = verifySessionToken(match[1], { apiKey, apiSecret });
+      const { shop, payload } = verifySessionToken(match[1], { apiKey, apiSecret });
       req.shop = shop;
+      // Shopify staff member's user id ("sub"), used for the access log.
+      req.shopUser = payload.sub ? String(payload.sub) : null;
       next();
     } catch (err) {
       // Header tells App Bridge to fetch a fresh token and retry.

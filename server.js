@@ -247,6 +247,7 @@ app.post("/webhooks/customers/data_request", async (req, res) => {
   const email = req.body && req.body.customer && req.body.customer.email;
   try {
     const held = email ? await db.customerDataSummary(shop, email) : { decisions: 0, holds: 0 };
+    if (shop) await db.logAccess({ shop, actor: "shopify-webhook", action: "customers/data_request" });
     console.log(`Customer data request for ${shop}: ${held.decisions} decision rows, ${held.holds} hold rows (request id ${req.body.data_request && req.body.data_request.id})`);
     res.sendStatus(200);
   } catch (err) {
@@ -264,7 +265,10 @@ app.post("/webhooks/customers/redact", async (req, res) => {
   const shop = req.body && req.body.shop_domain;
   const email = req.body && req.body.customer && req.body.customer.email;
   try {
-    if (shop && email) await db.redactCustomer(shop, email);
+    if (shop && email) {
+      await db.redactCustomer(shop, email);
+      await db.logAccess({ shop, actor: "shopify-webhook", action: "customers/redact" });
+    }
     res.sendStatus(200);
   } catch (err) {
     console.error("customers/redact failed:", err.message);
@@ -339,6 +343,19 @@ async function fetchActiveSubscription(shop, accessToken) {
 // Every /api route below this line requires a valid session token and
 // uses the shop FROM THE TOKEN (req.shop), never from the request.
 app.use("/api", requireSessionToken({ apiKey: SHOPIFY_API_KEY, apiSecret: SHOPIFY_API_SECRET }));
+
+// Access log: every dashboard request that returns or changes data that
+// can include customer personal data is recorded with the Shopify staff
+// user who made it. Status checks are skipped (no personal data).
+const LOGGED_API = /^\/api\/(decisions|summary|run|settings|access-log|[a-z-]+\/sync)$/;
+app.use("/api", (req, res, next) => {
+  const p = req.baseUrl + req.path;
+  if (LOGGED_API.test(p) && !(p === "/api/settings" && req.method === "GET")) {
+    db.logAccess({ shop: req.shop, actor: `shopify-user:${req.shopUser || "unknown"}`, action: `${req.method} ${p}` })
+      .catch((err) => console.error("Access log write failed:", err.message));
+  }
+  next();
+});
 
 app.get("/api/billing/status", async (req, res) => {
   const shopData = await db.getShop(req.shop);
@@ -1030,6 +1047,10 @@ app.get("/api/decisions", async (req, res) => {
   res.json({ ok: true, decisions: await db.listDecisions(req.shop, limit) });
 });
 
+app.get("/api/access-log", async (req, res) => {
+  res.json({ ok: true, entries: await db.listAccessLog(req.shop, Number(req.query.limit) || 100) });
+});
+
 app.get("/api/summary", async (req, res) => {
   const days = Number(req.query.days) || 7;
   res.json({ ok: true, ...(await db.decisionSummary(req.shop, days)) });
@@ -1074,6 +1095,12 @@ db.migrate()
       if (process.env.DISABLE_SCHEDULER !== "true") {
         setTimeout(runAllShops, 30 * 1000);
         setInterval(runAllShops, CYCLE_MINUTES * 60 * 1000);
+        // Retention: delete expired personal data at startup and daily.
+        const purge = () => db.purgeExpired()
+          .then((r) => console.log(`Retention purge (>${db.RETENTION_DAYS}d): ${JSON.stringify(r)}`))
+          .catch((err) => console.error("Retention purge failed:", err.message));
+        setTimeout(purge, 60 * 1000);
+        setInterval(purge, 24 * 60 * 60 * 1000);
       }
       console.log(`Set APP_URL in .env to your public URL, then install via /auth?shop=your-store.myshopify.com`);
     });

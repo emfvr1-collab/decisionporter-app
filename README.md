@@ -31,6 +31,11 @@ the FTC prohibit — that is why every hold has a maximum length.
   The private API key needs **profiles:write** (and read) access.
 - **Gorgias:** create a view or rule that puts tag `decisionporter-vip` at the top.
 
+### Privacy safeguards
+- Decision log, released holds and product signals are deleted after 90 days (`RETENTION_DAYS`).
+- Every dashboard request that returns or changes customer data is recorded in `access_log`
+  with the Shopify staff user id; kept 365 days (`ACCESS_LOG_RETENTION_DAYS`). View it at `GET /api/access-log`.
+
 ### Files
 - `engine.js` — the four rules, shadow mode, the ticket classifier
 - `clients.js` — Shopify (incl. expiring-token refresh), Gorgias, Klaviyo, Inventory Planner calls

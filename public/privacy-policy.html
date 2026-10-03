@@ -78,7 +78,11 @@
   </ul>
 
   <h2>How long we keep data</h2>
-  <p>Decision logs and connected-integration credentials are kept for as long as the app remains installed on a store. Uninstalling the app triggers Shopify's mandatory <code>app/uninstalled</code> webhook, which deletes the shop's stored data automatically.</p>
+  <ul>
+    <li>Decision-log entries, released holds and product-complaint counts are deleted automatically after 90 days.</li>
+    <li>A record of who accessed personal data (which Shopify staff account, when, and what action) is kept for 365 days, then deleted.</li>
+    <li>Connected-integration credentials are kept while the app is installed. Uninstalling the app triggers Shopify's <code>app/uninstalled</code> webhook, which deletes all of the shop's stored data.</li>
+  </ul>
 
   <h2>What DecisionPorter stores about customers</h2>
   <p>DecisionPorter keeps a decision log and a list of active holds. These contain the customer's email address, the related support ticket number and subject, and the action taken. It does not store payment details, addresses or full order histories. Product complaint counts are stored by ticket number and product only.</p>
