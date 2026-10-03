@@ -50,7 +50,7 @@
 </head>
 <body>
   <h1>DecisionPorter — Privacy Policy</h1>
-  <div class="updated">Last updated: September 28, 2026</div>
+  <div class="updated">Last updated: October 2, 2026</div>
 
   <h2>Who we are</h2>
   <p>DecisionPorter is provided by Decision Porter LLC, a Pennsylvania limited liability company, located at 605 Richmond Drive, P311, Lancaster, PA 17601.</p>
@@ -58,11 +58,12 @@
   <h2>What we collect</h2>
   <p>When a store installs DecisionPorter, we collect:</p>
   <ul>
-    <li>The store's Shopify domain and access token, so the app can function.</li>
+    <li>The store's Shopify domain and access tokens, so the app can function.</li>
+    <li><strong>Shopify customer and order data:</strong> for customers who have an open support ticket, DecisionPorter looks up the customer by email, their lifetime spend, and the products in their most recent order. It adds or removes the tag <code>dp-hold-review</code> on the customer and the tags <code>dp-sizing-watch</code> or <code>dp-quality-watch</code> on products.</li>
     <li>Once connected, data from the integrations you authorize:
       <ul>
-        <li><strong>Gorgias:</strong> ticket subjects and summaries, used to classify priority; DecisionPorter writes a tag back to high-confidence tickets.</li>
-        <li><strong>Klaviyo:</strong> customer profile and churn-risk data, and list membership; DecisionPorter adds at-risk customers to a win-back list you choose.</li>
+        <li><strong>Gorgias:</strong> ticket subjects, summaries, status and the customer's email, used to detect complaints and classify priority; DecisionPorter writes tags back to tickets (including <code>decisionporter-vip</code>).</li>
+        <li><strong>Klaviyo:</strong> customer profile and churn-risk data, and list membership; DecisionPorter adds at-risk customers to a win-back list you choose and sets the profile property <code>dp_open_complaint</code> while a customer has an open complaint.</li>
         <li><strong>Inventory Planner:</strong> SKU-level reorder forecasts (read-only).</li>
         <li><strong>Judge.me:</strong> review content and ratings (read-only).</li>
       </ul>
@@ -79,8 +80,11 @@
   <h2>How long we keep data</h2>
   <p>Decision logs and connected-integration credentials are kept for as long as the app remains installed on a store. Uninstalling the app triggers Shopify's mandatory <code>app/uninstalled</code> webhook, which deletes the shop's stored data automatically.</p>
 
+  <h2>What DecisionPorter stores about customers</h2>
+  <p>DecisionPorter keeps a decision log and a list of active holds. These contain the customer's email address, the related support ticket number and subject, and the action taken. It does not store payment details, addresses or full order histories. Product complaint counts are stored by ticket number and product only.</p>
+
   <h2>Customer-level requests</h2>
-  <p>This app does not store individual customers' personal data separately from the connected integrations themselves — it stores shop-level connection credentials and the decisions it generates. Requests under Shopify's <code>customers/data_request</code> and <code>customers/redact</code> webhooks are logged and acknowledged accordingly.</p>
+  <p>When Shopify sends a <code>customers/redact</code> request, DecisionPorter deletes every decision-log entry and hold that contains that customer's email. A <code>customers/data_request</code> is answered by identifying the entries held for that customer so the merchant can provide them.</p>
 
   <h2>Your rights</h2>
   <p>Merchants and their customers can request a copy of, or deletion of, their data by contacting <a href="mailto:support@decisionporter.com">support@decisionporter.com</a>. This app also responds to Shopify's mandatory <code>customers/data_request</code>, <code>customers/redact</code>, and <code>shop/redact</code> webhooks automatically.</p>

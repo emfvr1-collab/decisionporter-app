@@ -66,6 +66,20 @@
     width: 100%; padding: 8px; background: #222; color: #fff;
     border: none; cursor: pointer; font-size: 14px;
   }
+  .panel { background: #fff; border: 1px solid #ddd; padding: 16px; margin-bottom: 12px; max-width: 760px; }
+  .badge { display: inline-block; padding: 2px 8px; font-size: 12px; font-weight: bold; border-radius: 10px; }
+  .badge.shadow { background: #eef2f7; color: #3b4a5c; }
+  .badge.live { background: #e3f4ea; color: #1a7f4e; }
+  .tiles { display: flex; gap: 12px; flex-wrap: wrap; margin: 8px 0 4px; }
+  .tile { background: #fff; border: 1px solid #ddd; padding: 12px 14px; min-width: 150px; }
+  .tile .n { font-size: 24px; font-weight: bold; }
+  .tile .l { font-size: 12px; color: #555; }
+  .rule { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
+  .rule:last-child { border-bottom: none; }
+  .rule .t { font-weight: bold; font-size: 14px; }
+  .rule .d { font-size: 13px; color: #555; margin-top: 2px; }
+  .inline-num { width: 90px !important; display: inline-block; }
+  .muted { color: #666; font-size: 13px; }
   .note {
     margin-top: 28px; padding: 12px; background: #fff8e1;
     border: 1px solid #ffe082; font-size: 13px; color: #5f4b00;
@@ -75,7 +89,62 @@
 <body>
 
   <h1>DecisionPorter</h1>
-  <p class="sub">Connect a tool below, then sync to see real decisions in the feed.</p>
+  <p class="sub">Stops your apps from working against each other when a customer is unhappy.
+    Connect Gorgias plus any of the other tools below. DecisionPorter checks every 15 minutes.</p>
+
+  <h2>Decisions <span class="badge shadow" id="mode-badge">Shadow mode</span></h2>
+  <p class="muted" id="mode-explain">Shadow mode: DecisionPorter logs what it <em>would</em> do and changes nothing in your apps. Free.</p>
+  <div class="tiles">
+    <div class="tile"><div class="n" id="t-held">–</div><div class="l">Customers put on hold<br>(reviews &amp; promos), 7 days</div></div>
+    <div class="tile"><div class="n" id="t-active">–</div><div class="l">On hold right now</div></div>
+    <div class="tile"><div class="n" id="t-vip">–</div><div class="l">VIP tickets flagged,<br>7 days</div></div>
+    <div class="tile"><div class="n" id="t-sku">–</div><div class="l">Products flagged,<br>7 days</div></div>
+  </div>
+  <p class="muted" id="last-run"></p>
+  <button class="btn" id="run-btn" onclick="runNow()">Run now</button>
+  <div class="status-msg" id="run-status"></div>
+
+  <h2>Rules</h2>
+  <div class="panel" id="rules-panel">
+    <div class="rule">
+      <input type="checkbox" id="r-holdReviews">
+      <div><div class="t">1. Hold review requests during an open complaint</div>
+        <div class="d">Tags the customer <code>dp-hold-review</code> in Shopify. In Judge.me, add that tag to the customer blacklist
+          (Judge.me skips tagged customers). The tag comes off when the ticket closes, or after
+          <input type="number" id="s-maxHoldDays" class="inline-num" min="1" max="30"> days at most, so requests are delayed, never cancelled.</div></div>
+    </div>
+    <div class="rule">
+      <input type="checkbox" id="r-pauseMarketing">
+      <div><div class="t">2. Pause promotional emails during an open complaint</div>
+        <div class="d">Sets <code>dp_open_complaint</code> on the customer's Klaviyo profile (true while the complaint is open).
+          In your promotional flows, add a profile filter: <em>dp_open_complaint is not true</em>.</div></div>
+    </div>
+    <div class="rule">
+      <input type="checkbox" id="r-skuFlags">
+      <div><div class="t">3. Flag products with sizing or quality complaints</div>
+        <div class="d"><input type="number" id="s-skuFlagMin" class="inline-num" min="1" max="100"> complaints about one product in 30 days
+          tags it <code>dp-sizing-watch</code> or <code>dp-quality-watch</code> in Shopify, with Inventory Planner's reorder
+          recommendation shown in the log so you can check before reordering.</div></div>
+    </div>
+    <div class="rule">
+      <input type="checkbox" id="r-vipEscalation">
+      <div><div class="t">4. Put your best customers first</div>
+        <div class="d">Open tickets from customers who have spent at least
+          <input type="number" id="s-vipThreshold" class="inline-num" min="0"> get the Gorgias tag <code>decisionporter-vip</code>.
+          In Gorgias, create a view or rule that puts this tag at the top.</div></div>
+    </div>
+    <label style="margin-top:14px;"><input type="checkbox" id="s-live"> Live mode: actually tag customers, products and tickets (needs a paid plan)</label>
+    <button class="btn" id="save-btn" onclick="saveSettings()">Save rules</button>
+    <div class="status-msg" id="save-status"></div>
+  </div>
+
+  <h2>Decision log</h2>
+  <table>
+    <thead><tr><th>When</th><th>Rule</th><th>What happened</th><th>Action</th><th>Status</th></tr></thead>
+    <tbody id="log-body"><tr><td colspan="5">No decisions yet. Connect Gorgias, then click Run now.</td></tr></tbody>
+  </table>
+
+  <h2 style="margin-top:40px;">Connections</h2>
 
   <h2>Gorgias — support tickets</h2>
   <fieldset id="gorgias-connect-box">
@@ -607,6 +676,122 @@
         statusEl.className = 'status-msg err';
       });
   }
+
+  // ---------- Decision engine ----------
+  var RULE_NAMES = { holdReviews: 'Hold reviews', pauseMarketing: 'Pause promos', skuFlags: 'Product flag', vipEscalation: 'VIP ticket' };
+  var STATUS_NAMES = { would_apply: 'Would apply (shadow)', applied: 'Applied', released: 'Released', failed: 'Failed' };
+
+  function setText(id, v) { document.getElementById(id).textContent = v; }
+
+  function loadSettings() {
+    authFetch('/api/settings').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d.ok) return;
+      var s = d.settings;
+      ['holdReviews', 'pauseMarketing', 'skuFlags', 'vipEscalation'].forEach(function(k) {
+        document.getElementById('r-' + k).checked = !!s.rules[k];
+      });
+      document.getElementById('s-maxHoldDays').value = s.maxHoldDays;
+      document.getElementById('s-skuFlagMin').value = s.skuFlagMin;
+      document.getElementById('s-vipThreshold').value = s.vipThreshold;
+      document.getElementById('s-live').checked = s.mode === 'live';
+      var badge = document.getElementById('mode-badge');
+      badge.textContent = d.live ? 'Live' : 'Shadow mode';
+      badge.className = 'badge ' + (d.live ? 'live' : 'shadow');
+      setText('mode-explain', d.live
+        ? 'Live: DecisionPorter is tagging customers, products and tickets in your apps.'
+        : (s.mode === 'live' && !d.plan
+            ? 'Live mode is switched on but needs a paid plan. Until then DecisionPorter only logs what it would do.'
+            : 'Shadow mode: DecisionPorter logs what it would do and changes nothing in your apps. Free.'));
+      var last = d.lastCycleAt ? 'Last check: ' + new Date(d.lastCycleAt).toLocaleString() : 'Not run yet.';
+      if (d.lastCycleError) last += ' Problem: ' + d.lastCycleError;
+      setText('last-run', last);
+    });
+  }
+
+  function saveSettings() {
+    var statusEl = document.getElementById('save-status');
+    var body = {
+      mode: document.getElementById('s-live').checked ? 'live' : 'shadow',
+      maxHoldDays: Number(document.getElementById('s-maxHoldDays').value),
+      skuFlagMin: Number(document.getElementById('s-skuFlagMin').value),
+      vipThreshold: Number(document.getElementById('s-vipThreshold').value),
+      rules: {}
+    };
+    ['holdReviews', 'pauseMarketing', 'skuFlags', 'vipEscalation'].forEach(function(k) {
+      body.rules[k] = document.getElementById('r-' + k).checked;
+    });
+    authFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        statusEl.textContent = d.ok ? 'Saved.' : (d.error || 'Could not save.');
+        statusEl.className = 'status-msg ' + (d.ok ? 'ok' : 'err');
+        if (!d.ok) document.getElementById('s-live').checked = false;
+        loadSettings();
+      })
+      .catch(function() { statusEl.textContent = 'Network error.'; statusEl.className = 'status-msg err'; });
+  }
+
+  function loadSummary() {
+    authFetch('/api/summary?days=7').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d.ok) return;
+      var held = 0, vip = 0, sku = 0;
+      d.counts.forEach(function(c) {
+        if (c.status !== 'applied' && c.status !== 'would_apply') return;
+        if (c.rule === 'holdReviews' || c.rule === 'pauseMarketing') held += c.n;
+        if (c.rule === 'vipEscalation') vip += c.n;
+        if (c.rule === 'skuFlags') sku += c.n;
+      });
+      setText('t-held', held); setText('t-vip', vip); setText('t-sku', sku); setText('t-active', d.activeHolds);
+    });
+  }
+
+  function loadLog() {
+    authFetch('/api/decisions?limit=100').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d.ok) return;
+      var body = document.getElementById('log-body');
+      body.innerHTML = '';
+      if (!d.decisions.length) {
+        body.innerHTML = '<tr><td colspan="5">No decisions yet. Connect Gorgias, then click Run now.</td></tr>';
+        return;
+      }
+      // textContent only: ticket subjects come from customers.
+      d.decisions.forEach(function(x) {
+        var tr = document.createElement('tr');
+        [new Date(x.createdAt).toLocaleString(), RULE_NAMES[x.rule] || x.rule, x.summary || '', x.action || '', STATUS_NAMES[x.status] || x.status]
+          .forEach(function(v) { var td = document.createElement('td'); td.textContent = String(v); tr.appendChild(td); });
+        body.appendChild(tr);
+      });
+    });
+  }
+
+  function runNow() {
+    var btn = document.getElementById('run-btn');
+    var statusEl = document.getElementById('run-status');
+    btn.disabled = true;
+    statusEl.textContent = 'Checking tickets and applying rules…';
+    statusEl.className = 'status-msg';
+    authFetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        btn.disabled = false;
+        if (d.ok) {
+          var s = d.summary;
+          statusEl.textContent = s.skipped ? 'A check is already running.' :
+            'Done (' + s.mode + '): ' + s.held + ' put on hold, ' + s.released + ' released, ' + s.vip + ' VIP tickets, ' + s.skuFlags + ' products flagged' +
+            (s.errors.length ? '. Problems: ' + s.errors.slice(0, 2).join(' | ') : '.');
+          statusEl.className = 'status-msg ' + (s.errors.length ? 'err' : 'ok');
+        } else {
+          statusEl.textContent = d.error || 'Run failed.';
+          statusEl.className = 'status-msg err';
+        }
+        loadSettings(); loadSummary(); loadLog();
+      })
+      .catch(function() { btn.disabled = false; statusEl.textContent = 'Network error.'; statusEl.className = 'status-msg err'; });
+  }
+
+  loadSettings();
+  loadSummary();
+  loadLog();
 
   checkGorgiasStatus();
   checkKlaviyoStatus();

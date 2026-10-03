@@ -23,6 +23,9 @@ const fetch = require("node-fetch");
 const path = require("path");
 const db = require("./db");
 const { requireSessionToken, isValidShopDomain } = require("./security");
+const engine = require("./engine");
+const { classifyTicket } = engine;
+const clients = require("./clients");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,7 +34,12 @@ const PORT = process.env.PORT || 3000;
 const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY;
 const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
 const APP_URL = process.env.APP_URL; // e.g. https://your-app.onrender.com
-const SCOPES = "read_orders,read_products,write_products"; // adjust once you wire in real integrations
+// read_orders: match complaints to the product in the customer's last order (rule 3)
+// write_products: tag products with sizing/quality complaints (rule 3)
+// write_customers: look up lifetime spend (rule 4) and tag customers whose
+//   review requests are on hold (rule 1). Customer data is "protected
+//   customer data": request access in the Partner Dashboard before review.
+const SCOPES = "read_orders,write_products,write_customers";
 // Shopify retires each Admin API version about a year after release,
 // so keep this current (check shopify.dev/docs/api/usage/versioning).
 const API_VERSION = "2026-07";
@@ -133,8 +141,14 @@ app.get("/auth/callback", async (req, res) => {
       return res.status(500).send("Could not get an access token from Shopify");
     }
 
-    // Save the shop + token
-    await db.saveShop(shop, { accessToken: tokenData.access_token, installedAt: new Date().toISOString() });
+    // Save the shop + token. Expiring offline tokens last ~1 hour; the
+    // refresh token renews them (see clients.js makeTokenManager).
+    await db.saveShop(shop, {
+      accessToken: tokenData.access_token,
+      refreshToken: tokenData.refresh_token || null,
+      tokenExpiresAt: tokenData.expires_in ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString() : null,
+      installedAt: new Date().toISOString(),
+    });
 
     // Register the webhooks Shopify requires
     await registerMandatoryWebhooks(shop, tokenData.access_token);
@@ -225,21 +239,37 @@ app.post("/webhooks/app/uninstalled", async (req, res) => {
 // -------------------------------------------------------------
 // REQUIRED webhook #2: a customer asks what data you hold on them
 // -------------------------------------------------------------
-app.post("/webhooks/customers/data_request", (req, res) => {
+app.post("/webhooks/customers/data_request", async (req, res) => {
   if (!verifyWebhookHmac(req)) return res.sendStatus(401);
-  // This starter app stores no customer personal data — just log
-  // the request so you have a record of it, and respond OK.
-  console.log("Customer data request received:", req.body);
-  res.sendStatus(200);
+  // DecisionPorter stores a customer's email only in the decision log
+  // and hold records. Log what we hold so the merchant can be sent it.
+  const shop = req.body && req.body.shop_domain;
+  const email = req.body && req.body.customer && req.body.customer.email;
+  try {
+    const held = email ? await db.customerDataSummary(shop, email) : { decisions: 0, holds: 0 };
+    console.log(`Customer data request for ${shop}: ${held.decisions} decision rows, ${held.holds} hold rows (request id ${req.body.data_request && req.body.data_request.id})`);
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("customers/data_request failed:", err.message);
+    res.sendStatus(500);
+  }
 });
 
 // -------------------------------------------------------------
 // REQUIRED webhook #3: erase a specific customer's data
 // -------------------------------------------------------------
-app.post("/webhooks/customers/redact", (req, res) => {
+app.post("/webhooks/customers/redact", async (req, res) => {
   if (!verifyWebhookHmac(req)) return res.sendStatus(401);
-  console.log("Customer redact request received:", req.body);
-  res.sendStatus(200);
+  // Erase every decision and hold that names this customer.
+  const shop = req.body && req.body.shop_domain;
+  const email = req.body && req.body.customer && req.body.customer.email;
+  try {
+    if (shop && email) await db.redactCustomer(shop, email);
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("customers/redact failed:", err.message);
+    res.sendStatus(500);
+  }
 });
 
 // -------------------------------------------------------------
@@ -279,6 +309,10 @@ function planKeyFromSubscriptionName(name) {
   const entry = Object.entries(PLANS).find(([, p]) => `DecisionPorter — ${p.name}` === name);
   return entry ? entry[0] : null;
 }
+
+// Always get the Shopify token through this — it refreshes expiring
+// offline tokens before they lapse.
+const getShopifyToken = clients.makeTokenManager({ db, fetch, apiKey: SHOPIFY_API_KEY, apiSecret: SHOPIFY_API_SECRET });
 
 async function shopifyGraphql(shop, accessToken, query, variables) {
   const response = await fetch(`https://${shop}/admin/api/${API_VERSION}/graphql.json`, {
@@ -323,7 +357,7 @@ app.post("/api/billing/subscribe", async (req, res) => {
   try {
     const data = await shopifyGraphql(
       shop,
-      shopData.accessToken,
+      await getShopifyToken(shop),
       `mutation Subscribe($name: String!, $returnUrl: URL!, $trialDays: Int, $test: Boolean, $lineItems: [AppSubscriptionLineItemInput!]!) {
         appSubscriptionCreate(name: $name, returnUrl: $returnUrl, trialDays: $trialDays, test: $test, lineItems: $lineItems) {
           confirmationUrl
@@ -369,7 +403,7 @@ app.get("/billing/callback", async (req, res) => {
   if (!shopData || !shopData.accessToken) return res.status(401).send("Shop not installed");
 
   try {
-    const active = await fetchActiveSubscription(shop, shopData.accessToken);
+    const active = await fetchActiveSubscription(shop, await getShopifyToken(shop));
     const planKey = active ? planKeyFromSubscriptionName(active.name) : null;
     await db.saveShop(shop, { plan: planKey, subscriptionId: active ? active.id : null });
   } catch (err) {
@@ -430,56 +464,7 @@ async function addGorgiasTag(subdomain, email, apiKey, ticketId, tagName) {
   });
 }
 
-// ---- The actual decision logic ----
-// This is a simple, transparent, keyword-based classifier — a real
-// starting point, not a trained ML model. It's deliberately easy to
-// read and to extend. A natural next upgrade is swapping this
-// function for a call to a hosted classifier or an LLM, without
-// changing anything else in the app.
-const ESCALATE_KEYWORDS = [
-  "refund", "chargeback", "lawyer", "attorney", "scam", "fraud",
-  "cancel my order", "never received", "sue", "furious", "unacceptable",
-];
-const URGENT_KEYWORDS = [
-  "urgent", "asap", "immediately", "broken", "damaged", "wrong item", "missing",
-];
-const ROUTINE_KEYWORDS = [
-  "size", "sizing", "color", "when will", "tracking", "status update", "how do i",
-];
-
-function classifyTicket(ticket) {
-  const subject = (ticket.subject || "").toLowerCase();
-  const summary = (ticket.summary && ticket.summary.content ? ticket.summary.content : "").toLowerCase();
-  const text = `${subject} ${summary}`;
-
-  let score = 0.3;
-  const matched = [];
-
-  ESCALATE_KEYWORDS.forEach((kw) => {
-    if (text.includes(kw)) { score += 0.25; matched.push(kw); }
-  });
-  URGENT_KEYWORDS.forEach((kw) => {
-    if (text.includes(kw)) { score += 0.15; matched.push(kw); }
-  });
-  ROUTINE_KEYWORDS.forEach((kw) => {
-    if (text.includes(kw)) { score -= 0.1; matched.push(kw); }
-  });
-
-  score = Math.max(0, Math.min(1, score));
-
-  // Confidence reflects how much signal we actually found — a ticket
-  // with no keyword matches at all should NOT be auto-actioned.
-  const confidence = matched.length > 0 ? Math.min(0.95, 0.55 + matched.length * 0.12) : 0.4;
-
-  // Category comes from the final score, not just whether an escalate
-  // keyword happened to fire — a ticket with three urgent signals
-  // (broken, damaged, ASAP) should escalate even with no single
-  // "refund"-style keyword present.
-  let category = score >= 0.6 ? "escalate" : "routine";
-  if (confidence < 0.6) category = "needs_review";
-
-  return { category, urgencyScore: Number(score.toFixed(2)), confidence: Number(confidence.toFixed(2)), matched };
-}
+// The ticket classifier now lives in engine.js (classifyTicket).
 
 // -------------------------------------------------------------
 // -------------------------------------------------------------
@@ -845,6 +830,7 @@ app.post("/api/klaviyo/sync", async (req, res) => {
 
   try {
     const profiles = await fetchProfilesWithChurnRisk(config.apiKey);
+    const onHold = await db.activeHoldEmails(shop);
     const results = [];
 
     for (const profile of profiles) {
@@ -858,7 +844,10 @@ app.post("/api/klaviyo/sync", async (req, res) => {
       }
 
       let action;
-      if (risk.atRisk) {
+      if (onHold.has(String(email).toLowerCase())) {
+        // Cross-app rule: no win-back email while a complaint is open.
+        action = "Held — customer has an open complaint in Gorgias";
+      } else if (risk.atRisk) {
         await addProfileToList(config.apiKey, config.winbackListId, profile.id);
         action = "Added to win-back list";
       } else {
@@ -958,18 +947,113 @@ app.get("/", (req, res) => {
   res.type("html").send(DASHBOARD_HTML);
 });
 
-// Sample decision data for the dashboard — replace with real calls
-// to Gorgias / Klaviyo / Inventory Planner / Judge.me once you have
-// API keys for each.
-app.get("/api/sample-decisions", (req, res) => {
-  res.json([
-    { source: "Gorgias", item: "Ticket #4821 — sizing question", confidence: 0.94, action: "Routed: routine" },
-    { source: "Gorgias", item: "Ticket #4822 — refund demand", confidence: 0.61, action: "Escalated to review" },
-    { source: "Klaviyo", item: "Win-back send — segment 12", confidence: 0.79, action: "Sent" },
-    { source: "Inventory Planner", item: "SKU 2214-BLK reorder check", confidence: 0.91, action: "Flagged: act today" },
-    { source: "Judge.me", item: "Review #994 — possible spam", confidence: 0.47, action: "Held for review" },
-  ]);
+// -------------------------------------------------------------
+// DECISION ENGINE: settings, run, decision log (see engine.js)
+// -------------------------------------------------------------
+function buildDeps(shop, shopData) {
+  return {
+    store: db.store,
+    gorgias: clients.makeGorgiasClient({ config: shopData.gorgias, fetch }),
+    shopify: clients.makeShopifyClient({ shop, getToken: getShopifyToken, fetch, apiVersion: API_VERSION }),
+    klaviyo: shopData.klaviyo ? clients.makeKlaviyoClient({ config: shopData.klaviyo, fetch }) : null,
+    inventoryPlanner: shopData.inventoryPlanner ? clients.makeInventoryPlannerClient({ config: shopData.inventoryPlanner, fetch }) : null,
+    now: new Date(),
+  };
+}
+
+const running = new Set(); // shops with a cycle in progress
+
+async function runCycleForShop(shop) {
+  if (running.has(shop)) return { skipped: "already running" };
+  running.add(shop);
+  try {
+    const shopData = await db.getShop(shop);
+    if (!shopData || !shopData.accessToken) throw new Error("Shop not installed");
+    if (!shopData.gorgias) throw new Error("Connect Gorgias first — every rule starts from support tickets");
+    const summary = await engine.runCycle({ shop, shopData, settings: shopData.settings, deps: buildDeps(shop, shopData) });
+    await db.saveShop(shop, {
+      lastCycleAt: new Date().toISOString(),
+      lastCycleError: summary.errors.length ? summary.errors.slice(0, 3).join(" | ") : null,
+    });
+    return summary;
+  } catch (err) {
+    await db.saveShop(shop, { lastCycleAt: new Date().toISOString(), lastCycleError: err.message }).catch(() => {});
+    throw err;
+  } finally {
+    running.delete(shop);
+  }
+}
+
+app.get("/api/settings", async (req, res) => {
+  const shopData = await db.getShop(req.shop);
+  if (!shopData) return res.status(401).json({ ok: false, error: "Install the app on this store first" });
+  const settings = engine.normalizeSettings(shopData.settings);
+  res.json({
+    ok: true,
+    settings,
+    live: engine.isLive(settings, shopData),
+    plan: shopData.plan || null,
+    lastCycleAt: shopData.lastCycleAt,
+    lastCycleError: shopData.lastCycleError,
+    tags: engine.TAGS,
+  });
 });
+
+app.post("/api/settings", async (req, res) => {
+  const shopData = await db.getShop(req.shop);
+  if (!shopData) return res.status(401).json({ ok: false, error: "Install the app on this store first" });
+  const current = engine.normalizeSettings(shopData.settings);
+  const incoming = req.body || {};
+  const next = engine.normalizeSettings({
+    ...current,
+    ...incoming,
+    rules: { ...current.rules, ...(incoming.rules || {}) },
+  });
+  if (next.mode === "live" && !shopData.plan) {
+    return res.status(402).json({ ok: false, error: "Choose a plan to switch on live mode. Shadow mode stays free." });
+  }
+  await db.saveShop(req.shop, { settings: next });
+  res.json({ ok: true, settings: next, live: engine.isLive(next, shopData) });
+});
+
+app.post("/api/run", async (req, res) => {
+  try {
+    const summary = await runCycleForShop(req.shop);
+    res.json({ ok: true, summary });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+app.get("/api/decisions", async (req, res) => {
+  const limit = Number(req.query.limit) || 100;
+  res.json({ ok: true, decisions: await db.listDecisions(req.shop, limit) });
+});
+
+app.get("/api/summary", async (req, res) => {
+  const days = Number(req.query.days) || 7;
+  res.json({ ok: true, ...(await db.decisionSummary(req.shop, days)) });
+});
+
+// Runs every connected shop on a timer. On Render this needs an
+// instance that doesn't sleep (the free tier spins down when idle).
+const CYCLE_MINUTES = Math.max(5, Number(process.env.CYCLE_MINUTES) || 15);
+async function runAllShops() {
+  let shops = [];
+  try {
+    shops = await db.listShopsForCycle();
+  } catch (err) {
+    return console.error("Scheduler: could not list shops:", err.message);
+  }
+  for (const shop of shops) {
+    try {
+      const s = await runCycleForShop(shop);
+      if (!s.skipped) console.log(`Cycle ${shop}: ${s.mode}, held ${s.held}, released ${s.released}, vip ${s.vip}, sku flags ${s.skuFlags}, errors ${s.errors.length}`);
+    } catch (err) {
+      console.error(`Cycle failed for ${shop}:`, err.message);
+    }
+  }
+}
 
 // -------------------------------------------------------------
 // Safety net: if anything above throws unexpectedly, send back a
@@ -986,7 +1070,11 @@ app.use((err, req, res, next) => {
 db.migrate()
   .then(() => {
     app.listen(PORT, () => {
-      console.log(`DecisionPorter starter app running on port ${PORT}`);
+      console.log(`DecisionPorter running on port ${PORT}; decision cycle every ${CYCLE_MINUTES} min`);
+      if (process.env.DISABLE_SCHEDULER !== "true") {
+        setTimeout(runAllShops, 30 * 1000);
+        setInterval(runAllShops, CYCLE_MINUTES * 60 * 1000);
+      }
       console.log(`Set APP_URL in .env to your public URL, then install via /auth?shop=your-store.myshopify.com`);
     });
   })

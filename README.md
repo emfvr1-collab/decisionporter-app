@@ -3,6 +3,41 @@
 This is a real, working Shopify app. It's simplified on purpose so it's
 easy to follow. Do these steps in order.
 
+## The decision engine — what DecisionPorter actually does
+Every 15 minutes (and when you click **Run now**) `engine.js` reads the
+store's latest Gorgias tickets and applies four cross-app rules:
+
+| Rule | Trigger | What it does in your apps |
+| --- | --- | --- |
+| 1. Hold review requests | Open complaint ticket (refund, damaged, unacceptable…) | Tags the Shopify customer `dp-hold-review`; Judge.me skips tagged customers once you add the tag to its blacklist. Removed when the ticket closes, or after 14 days at most |
+| 2. Pause promos | Same complaint | Sets `dp_open_complaint = true` on the customer's Klaviyo profile (back to false on release). The Klaviyo win-back sync also skips these customers |
+| 3. Flag products | 3+ sizing or quality complaints about one product in 30 days | Tags the product `dp-sizing-watch` / `dp-quality-watch`; shows Inventory Planner's reorder recommendation next to it |
+| 4. VIP first | Open ticket from a customer whose lifetime spend ≥ $500 | Tags the Gorgias ticket `decisionporter-vip` |
+
+**Shadow mode is the default.** Nothing is written to any app; every
+decision is logged as "would apply" so the merchant sees the value first.
+Live mode needs the merchant's switch **and** an active paid plan.
+Thresholds and each rule's on/off switch are on the dashboard.
+
+Rule 1 delays review requests; it never cancels them. Permanently not
+asking unhappy customers for reviews is "review gating", which Google and
+the FTC prohibit — that is why every hold has a maximum length.
+
+### What the merchant sets up once in each app
+- **Judge.me:** Settings → blacklist customers by Shopify tag → add `dp-hold-review`.
+  (If they send review requests through Klaviyo instead, rule 2's property covers it:
+  add the filter below to the "Eligible for Judge.me Review Request" flow.)
+- **Klaviyo:** in promotional flows, add the profile filter *dp_open_complaint is not true*.
+  The private API key needs **profiles:write** (and read) access.
+- **Gorgias:** create a view or rule that puts tag `decisionporter-vip` at the top.
+
+### Files
+- `engine.js` — the four rules, shadow mode, the ticket classifier
+- `clients.js` — Shopify (incl. expiring-token refresh), Gorgias, Klaviyo, Inventory Planner calls
+- `db.js` — Postgres: shops, `decisions` (the log), `holds`, `sku_signals`
+- `server.js` — install, billing, webhooks, dashboard API, the 15-minute scheduler
+- `test/` — `npm test` (the database and server tests run when `TEST_DATABASE_URL` is set)
+
 ## What's already done for you
 - The "install this app" flow (OAuth)
 - The 4 webhooks Shopify requires before it will even look at your app
@@ -105,11 +140,21 @@ easy to follow. Do these steps in order.
    So this integration surfaces what needs attention rather than
    acting on it automatically.
 
-## What's still not built
-All four planned integrations (Gorgias, Klaviyo, Inventory Planner,
-Judge.me) are wired in now, and storage has moved from a single JSON
-file to real Postgres (see the next section). What's left is real
-hosting, finished legal content, and the App Store submission steps.
+## What's left before App Store submission
+1. **Push this code** to GitHub so Render redeploys it.
+2. **Protected customer data:** the app now reads customer email and spend.
+   In the Partner Dashboard → your app → API access → Protected customer
+   data access, request access and fill in the data-use questions
+   (Level 1 + email field). Review won't pass without it.
+3. **New permissions:** scopes are now `read_orders,write_products,write_customers`.
+   Reinstall the app on your development store to grant them.
+4. **Render instance that doesn't sleep.** The free tier spins down when idle,
+   which stops the 15-minute checks. Use a paid instance and a paid Postgres
+   before real merchants install.
+5. **Test with real accounts** on the development store: a Gorgias trial,
+   Klaviyo free account, Judge.me free plan. Run in shadow mode first and
+   check the decision log matches what you expect.
+6. Listing content, screenshots and `BILLING_TEST_MODE=false` (see Step 9).
 
 ## How the database part actually works
 1. Storage used to be one `shops.json` file. That's gone now — all

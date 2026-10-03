@@ -1,16 +1,17 @@
 # DecisionPorter — Privacy Policy
 
-**Last updated:** September 28, 2026
+**Last updated:** October 2, 2026
 
 ## Who we are
 DecisionPorter is provided by Decision Porter LLC, a Pennsylvania limited liability company, located at 605 Richmond Drive, P311, Lancaster, PA 17601.
 
 ## What we collect
 When a store installs DecisionPorter, we collect:
-- The store's Shopify domain and access token, so the app can function.
+- The store's Shopify domain and access tokens, so the app can function.
+- **Shopify customer and order data:** for customers who have an open support ticket, DecisionPorter looks up the customer by email, their lifetime spend, and the products in their most recent order. It adds or removes the tag `dp-hold-review` on the customer and the tags `dp-sizing-watch` or `dp-quality-watch` on products.
 - Once connected, data from the integrations you authorize:
-  - **Gorgias:** ticket subjects and summaries, used to classify priority; DecisionPorter writes a tag back to high-confidence tickets.
-  - **Klaviyo:** customer profile and churn-risk data, and list membership; DecisionPorter adds at-risk customers to a win-back list you choose.
+  - **Gorgias:** ticket subjects, summaries, status and the customer's email, used to detect complaints and classify priority; DecisionPorter writes tags back to tickets (including `decisionporter-vip`).
+  - **Klaviyo:** customer profile and churn-risk data, and list membership; DecisionPorter adds at-risk customers to a win-back list you choose and sets the profile property `dp_open_complaint` while a customer has an open complaint.
   - **Inventory Planner:** SKU-level reorder forecasts (read-only).
   - **Judge.me:** review content and ratings (read-only).
 - Only the data needed to generate a decision is retained — DecisionPorter does not store full customer records, payment details, or order history beyond what a connected integration provides.
@@ -22,8 +23,11 @@ When a store installs DecisionPorter, we collect:
 ## How long we keep data
 Decision logs and connected-integration data are kept for as long as the app remains installed on a store. Uninstalling the app triggers Shopify's mandatory `app/uninstalled` webhook, which deletes the shop's stored data automatically.
 
+## What DecisionPorter stores about customers
+DecisionPorter keeps a decision log and a list of active holds. These contain the customer's email address, the related support ticket number and subject, and the action taken. It does not store payment details, addresses or full order histories. Product complaint counts are stored by ticket number and product only.
+
 ## Customer-level requests
-This app does not store individual customers' personal data separately from the connected integrations themselves — it stores shop-level connection credentials and the decisions it generates. Requests under Shopify's `customers/data_request` and `customers/redact` webhooks are logged and acknowledged accordingly.
+When Shopify sends a `customers/redact` request, DecisionPorter deletes every decision-log entry and hold that contains that customer's email. A `customers/data_request` is answered by identifying the entries held for that customer so the merchant can provide them.
 
 ## Your rights
 Merchants and their customers can request a copy of, or deletion of, their data by contacting support@decisionporter.com. This app also responds to Shopify's mandatory `customers/data_request`, `customers/redact`, and `shop/redact` webhooks automatically.
