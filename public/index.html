@@ -66,6 +66,7 @@
     width: 100%; padding: 8px; background: #222; color: #fff;
     border: none; cursor: pointer; font-size: 14px;
   }
+  .plan-card button:disabled { background: #e8e8e8; color: #444; cursor: default; }
   .panel { background: #fff; border: 1px solid #ddd; padding: 16px; margin-bottom: 12px; max-width: 760px; }
   .badge { display: inline-block; padding: 2px 8px; font-size: 12px; font-weight: bold; border-radius: 10px; }
   .badge.shadow { background: #eef2f7; color: #3b4a5c; }
@@ -193,8 +194,6 @@
   <h2>Judge.me — review triage</h2>
   <fieldset id="jm-connect-box">
     <legend>Connect Judge.me</legend>
-    <label for="jm-shopdomain">Shop domain</label>
-    <input type="text" id="jm-shopdomain" placeholder="your-store.myshopify.com">
     <label for="jm-apitoken">Private API Token</label>
     <input type="password" id="jm-apitoken" placeholder="Found in Judge.me: Settings → Integrations → View API tokens">
     <br>
@@ -215,21 +214,13 @@
   </table>
 
   <div class="plans">
-    <div class="plan-card">
-      <h3>Starter</h3>
-      <div class="price">$29/mo</div>
-      <button onclick="selectPlan('starter')">Choose</button>
+    <div class="plan-card" id="plan-free">
+      <h3>Free</h3>
+      <div class="price">$0</div>
+      <p class="muted" style="margin:0 0 10px;">Shadow mode: see every decision DecisionPorter would make.</p>
+      <button disabled id="plan-free-btn">Included</button>
     </div>
-    <div class="plan-card">
-      <h3>Growth</h3>
-      <div class="price">$79/mo</div>
-      <button onclick="selectPlan('growth')">Choose</button>
-    </div>
-    <div class="plan-card">
-      <h3>Scale</h3>
-      <div class="price">$199/mo</div>
-      <button onclick="selectPlan('scale')">Choose</button>
-    </div>
+    <div id="paid-plans" style="display:contents;"></div>
   </div>
 
   <div class="note">
@@ -248,7 +239,8 @@
   <p class="muted" style="margin-top:24px;">
     <a href="/public/privacy-policy.html" target="_blank" rel="noopener">Privacy Policy</a> ·
     <a href="/public/terms.html" target="_blank" rel="noopener">Terms of Service</a> ·
-    <a href="/public/security-incident-response.html" target="_blank" rel="noopener">Security</a>
+    <a href="/public/security-incident-response.html" target="_blank" rel="noopener">Security</a> ·
+    <a href="/public/help.html" target="_blank" rel="noopener">Help &amp; setup guide</a>
   </p>
 
 <script>
@@ -265,6 +257,16 @@
     return shopify.idToken().then(function(token) {
       var headers = Object.assign({}, options.headers || {}, { Authorization: 'Bearer ' + token });
       return fetch(url, Object.assign({}, options, { headers: headers }));
+    }).then(function(res) {
+      // Server couldn't finish installing (legacy install flow): send the
+      // whole tab through Shopify's permission screen.
+      if (res.status === 401) {
+        return res.clone().json().then(function(body) {
+          if (body && body.reauthorize) { window.open(body.reauthorize, '_top'); }
+          return res;
+        }, function() { return res; });
+      }
+      return res;
     });
   }
 
@@ -329,7 +331,6 @@
   // ---------- Gorgias ----------
   function checkGorgiasStatus() {
     var shop = getShop();
-    if (!shop) return;
     authFetch('/api/gorgias/status?shop=' + encodeURIComponent(shop))
       .then(function(r) { return r.json(); })
       .then(function(data) {
@@ -348,7 +349,6 @@
     var statusEl = document.getElementById('gorgias-connect-status');
     var btn = document.getElementById('gorgias-connect-btn');
 
-    if (!shop) { statusEl.textContent = 'Missing shop parameter.'; statusEl.className = 'status-msg err'; return; }
     if (!subdomain || !email || !apiKey) {
       statusEl.textContent = 'Fill in all three fields.'; statusEl.className = 'status-msg err'; return;
     }
@@ -419,7 +419,6 @@
   // ---------- Klaviyo ----------
   function checkKlaviyoStatus() {
     var shop = getShop();
-    if (!shop) return;
     authFetch('/api/klaviyo/status?shop=' + encodeURIComponent(shop))
       .then(function(r) { return r.json(); })
       .then(function(data) {
@@ -437,7 +436,6 @@
     var statusEl = document.getElementById('klaviyo-connect-status');
     var btn = document.getElementById('klaviyo-connect-btn');
 
-    if (!shop) { statusEl.textContent = 'Missing shop parameter.'; statusEl.className = 'status-msg err'; return; }
     if (!apiKey || !winbackListId) {
       statusEl.textContent = 'Fill in both fields.'; statusEl.className = 'status-msg err'; return;
     }
@@ -508,7 +506,6 @@
   // ---------- Inventory Planner ----------
   function checkIPStatus() {
     var shop = getShop();
-    if (!shop) return;
     authFetch('/api/inventory-planner/status?shop=' + encodeURIComponent(shop))
       .then(function(r) { return r.json(); })
       .then(function(data) {
@@ -526,7 +523,6 @@
     var statusEl = document.getElementById('ip-connect-status');
     var btn = document.getElementById('ip-connect-btn');
 
-    if (!shop) { statusEl.textContent = 'Missing shop parameter.'; statusEl.className = 'status-msg err'; return; }
     if (!apiKey || !accountId) {
       statusEl.textContent = 'Fill in both fields.'; statusEl.className = 'status-msg err'; return;
     }
@@ -597,7 +593,6 @@
   // ---------- Judge.me ----------
   function checkJMStatus() {
     var shop = getShop();
-    if (!shop) return;
     authFetch('/api/judgeme/status?shop=' + encodeURIComponent(shop))
       .then(function(r) { return r.json(); })
       .then(function(data) {
@@ -610,14 +605,12 @@
 
   function connectJM() {
     var shop = getShop();
-    var shopDomain = document.getElementById('jm-shopdomain').value.trim();
     var apiToken = document.getElementById('jm-apitoken').value.trim();
     var statusEl = document.getElementById('jm-connect-status');
     var btn = document.getElementById('jm-connect-btn');
 
-    if (!shop) { statusEl.textContent = 'Missing shop parameter.'; statusEl.className = 'status-msg err'; return; }
-    if (!shopDomain || !apiToken) {
-      statusEl.textContent = 'Fill in both fields.'; statusEl.className = 'status-msg err'; return;
+    if (!apiToken) {
+      statusEl.textContent = 'Enter your Judge.me Private API Token.'; statusEl.className = 'status-msg err'; return;
     }
 
     btn.disabled = true;
@@ -627,7 +620,7 @@
     authFetch('/api/judgeme/connect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shop: shop, shopDomain: shopDomain, apiToken: apiToken })
+      body: JSON.stringify({ apiToken: apiToken })
     })
       .then(function(r) { return r.json(); })
       .then(function(data) {
@@ -795,9 +788,30 @@
       .catch(function() { btn.disabled = false; statusEl.textContent = 'Network error.'; statusEl.className = 'status-msg err'; });
   }
 
+  function loadPlans() {
+    authFetch('/api/billing/status').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d.ok) return;
+      var wrap = document.getElementById('paid-plans');
+      wrap.innerHTML = '';
+      document.getElementById('plan-free-btn').textContent = d.plan ? 'Included' : 'Current plan';
+      d.plans.forEach(function(p) {
+        var card = document.createElement('div'); card.className = 'plan-card';
+        var h = document.createElement('h3'); h.textContent = p.name; card.appendChild(h);
+        var pr = document.createElement('div'); pr.className = 'price'; pr.textContent = '$' + p.price + '/mo'; card.appendChild(pr);
+        var note = document.createElement('p'); note.className = 'muted'; note.style.margin = '0 0 10px';
+        note.textContent = 'Live mode. ' + d.trialDays + '-day free trial.'; card.appendChild(note);
+        var b = document.createElement('button');
+        if (d.plan === p.key) { b.textContent = 'Current plan'; b.disabled = true; }
+        else { b.textContent = d.plan ? 'Switch to ' + p.name : 'Choose'; b.onclick = function() { selectPlan(p.key); }; }
+        card.appendChild(b); wrap.appendChild(card);
+      });
+    });
+  }
+
   loadSettings();
   loadSummary();
   loadLog();
+  loadPlans();
 
   checkGorgiasStatus();
   checkKlaviyoStatus();

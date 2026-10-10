@@ -146,20 +146,36 @@ the FTC prohibit — that is why every hold has a maximum length.
    acting on it automatically.
 
 ## What's left before App Store submission
-1. **Push this code** to GitHub so Render redeploys it.
-2. **Protected customer data:** the app now reads customer email and spend.
-   In the Partner Dashboard → your app → API access → Protected customer
-   data access, request access and fill in the data-use questions
-   (Level 1 + email field). Review won't pass without it.
-3. **New permissions:** scopes are now `read_orders,write_products,write_customers`.
-   Reinstall the app on your development store to grant them.
-4. **Render instance that doesn't sleep.** The free tier spins down when idle,
-   which stops the 15-minute checks. Use a paid instance and a paid Postgres
-   before real merchants install.
-5. **Test with real accounts** on the development store: a Gorgias trial,
-   Klaviyo free account, Judge.me free plan. Run in shadow mode first and
-   check the decision log matches what you expect.
-6. Listing content, screenshots and `BILLING_TEST_MODE=false` (see Step 9).
+Done: code on GitHub and Render (paid web service + paid Postgres),
+protected customer data request, privacy/terms/incident pages.
+
+Changed on Oct 9 to meet App Store review rules:
+- **Shopify managed installation.** `shopify.app.toml` sets
+  `use_legacy_install_flow = false`, so Shopify shows the permission
+  screen itself. On the first API call from the embedded app, the server
+  swaps the App Bridge session token for an expiring offline token
+  (token exchange, `clients.exchangeSessionToken`). If that fails, the
+  dashboard is sent through the old `/auth` OAuth flow instead.
+- **GraphQL only.** The uninstall webhook is registered with
+  `webhookSubscriptionCreate`. The three privacy webhooks are declared
+  in `shopify.app.toml` (`compliance_topics`), which is how Shopify
+  requires them to be set up.
+- **No manual shop domain.** Judge.me only asks for its API token.
+- **Billing.** Prices come from `PLAN_PRICES`. Development stores always
+  get test charges. The dashboard shows the current plan and lets the
+  merchant switch plans without reinstalling.
+- **Help page** at `/public/help.html`, linked from the dashboard footer.
+
+Still to do:
+1. Put the app's Client ID into `shopify.app.toml` and release a new app
+   version from it (`shopify app deploy`), or set the same values by hand in
+   the Dev Dashboard: legacy install flow off, compliance webhook URLs set.
+2. Set up the `support@decisionporter.com` mailbox (used on every policy page).
+3. Decide prices and set `PLAN_PRICES` on Render.
+4. Test with real accounts on the development store (Gorgias trial,
+   Klaviyo free account, Judge.me free plan) in shadow mode.
+5. Listing: icon (1200×1200), 3–6 screenshots (1600×900), screencast,
+   reviewer instructions, emergency contact.
 
 ## How the database part actually works
 1. Storage used to be one `shops.json` file. That's gone now — all
@@ -240,7 +256,8 @@ install flow works.
 ## Step 8 — Test billing (safe — no real money)
 `BILLING_TEST_MODE=true` in your `.env` means Shopify will show you the
 real charge-approval screen but never actually bill anyone. Click one
-of the 3 plan buttons on the dashboard to try it.
+of the plan buttons on the dashboard to try it. Development stores
+always get test charges, whatever this setting says.
 
 ## Step 9 — Before you submit for real
 You'll need, at minimum:

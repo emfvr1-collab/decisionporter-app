@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DecisionPorter — Help &amp; setup guide</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #1a1a2e;
+    --muted: #5b5b70;
+    --accent: #3730a3;
+    --border: #e5e5ef;
+    --panel: #f6f6fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f0f1a;
+      --text: #e8e8f2;
+      --muted: #a0a0b8;
+      --accent: #a5b4fc;
+      --border: #2a2a40;
+      --panel: #171728;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 48px 20px 80px;
+  }
+  h1 { font-size: 1.75rem; margin-bottom: 0.25rem; }
+  .updated { color: var(--muted); font-size: 0.9rem; margin-bottom: 2rem; }
+  h2 { font-size: 1.15rem; margin-top: 2.25rem; margin-bottom: 0.75rem; color: var(--accent); }
+  h3 { font-size: 1rem; margin-top: 1.5rem; margin-bottom: 0.4rem; }
+  ul, ol { padding-left: 1.25rem; }
+  li { margin-bottom: 0.4rem; }
+  a { color: var(--accent); }
+  code { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; font-size: 0.9em; overflow-wrap: anywhere; }
+  .box { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin: 1rem 0; }
+  nav ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+</style>
+</head>
+<body>
+  <h1>DecisionPorter — Help &amp; setup guide</h1>
+  <div class="updated">Last updated: October 9, 2026</div>
+
+  <nav><ul>
+    <li><a href="#how">How it works</a></li>
+    <li><a href="#gorgias">Gorgias</a></li>
+    <li><a href="#judgeme">Judge.me</a></li>
+    <li><a href="#klaviyo">Klaviyo</a></li>
+    <li><a href="#ip">Inventory Planner</a></li>
+    <li><a href="#live">Going live</a></li>
+    <li><a href="#faq">Questions</a></li>
+  </ul></nav>
+
+  <h2 id="how">How it works</h2>
+  <p>DecisionPorter reads new support tickets from Gorgias every 15 minutes. When a customer has an open complaint, it coordinates your other apps so they don't work against each other:</p>
+  <ol>
+    <li><strong>Hold review requests.</strong> The customer gets the Shopify tag <code>dp-hold-review</code>, which Judge.me can be told to skip. The tag comes off when the ticket closes, or after the maximum hold (14 days by default), so requests are delayed, never cancelled.</li>
+    <li><strong>Pause promotional emails.</strong> The customer's Klaviyo profile gets <code>dp_open_complaint = true</code> while the complaint is open.</li>
+    <li><strong>Flag problem products.</strong> Repeated sizing or quality complaints about one product tag it <code>dp-sizing-watch</code> or <code>dp-quality-watch</code> in Shopify.</li>
+    <li><strong>Put your best customers first.</strong> Tickets from customers above your spend threshold get the Gorgias tag <code>decisionporter-vip</code>.</li>
+  </ol>
+  <div class="box"><strong>Shadow mode first.</strong> Every store starts in shadow mode: DecisionPorter only writes down what it <em>would</em> do in the Decision log and changes nothing. Watch the log for a week or two, then switch to live mode when you trust it.</div>
+  <p>Only Gorgias is required. Connect the others to turn on the rules that use them.</p>
+
+  <h2 id="gorgias">1. Connect Gorgias (required)</h2>
+  <ol>
+    <li>In Gorgias, open <strong>Settings → REST API</strong>.</li>
+    <li>Copy your <strong>API key</strong>. The same page shows the account email to use with it.</li>
+    <li>In DecisionPorter, under <strong>Connect Gorgias</strong>, enter your Gorgias subdomain (the part before <code>.gorgias.com</code>), that email, and the API key. Click <strong>Connect</strong>.</li>
+    <li>For the VIP rule: in Gorgias, create a view (or a rule) that shows tickets tagged <code>decisionporter-vip</code> first, so your team sees them at the top.</li>
+  </ol>
+
+  <h2 id="judgeme">2. Connect Judge.me (review holds)</h2>
+  <ol>
+    <li>In Judge.me, open <strong>Settings → Integrations → View API tokens</strong> and copy the <strong>Private API token</strong>.</li>
+    <li>Paste it under <strong>Connect Judge.me</strong> and click <strong>Connect</strong>. Your store is filled in automatically.</li>
+    <li><strong>Important:</strong> in Judge.me's review request settings, add the customer tag <code>dp-hold-review</code> to the tags whose customers should not receive review requests. Without this step DecisionPorter can tag customers, but Judge.me will still email them.</li>
+  </ol>
+
+  <h2 id="klaviyo">3. Connect Klaviyo (pause promotions, win-back)</h2>
+  <ol>
+    <li>In Klaviyo, open <strong>Settings → API Keys</strong> and create a <strong>private API key</strong> with full access to <strong>Profiles</strong> and <strong>Lists</strong>. DecisionPorter only updates profiles that already exist; it never creates new ones.</li>
+    <li>Create (or pick) a list for win-back, open it, and copy its <strong>list ID</strong> from the list's page.</li>
+    <li>Paste the key and list ID under <strong>Connect Klaviyo</strong> and click <strong>Connect</strong>.</li>
+    <li><strong>Important:</strong> in each promotional flow, add a profile filter: <code>dp_open_complaint</code> <em>is not true</em>. This is what actually pauses promotions for unhappy customers.</li>
+  </ol>
+
+  <h2 id="ip">4. Connect Inventory Planner (optional)</h2>
+  <p>Inventory Planner is read-only. When a product is flagged for sizing or quality complaints, DecisionPorter shows Inventory Planner's reorder recommendation next to it, so you can check before reordering.</p>
+  <ol>
+    <li>In Inventory Planner, open <strong>Account → Settings → API</strong>.</li>
+    <li>Copy the <strong>API key</strong> and <strong>Account ID</strong>, paste them under <strong>Connect Inventory Planner</strong>, and click <strong>Connect</strong>.</li>
+  </ol>
+
+  <h2 id="live">Going live</h2>
+  <ol>
+    <li>Check the Decision log. Each line shows the customer or product, the rule, and the action DecisionPorter would take.</li>
+    <li>Under <strong>Rules</strong>, turn off any rule you don't want and adjust the VIP threshold, the maximum hold days and the product complaint count.</li>
+    <li>Choose a paid plan under <strong>Plans</strong>. Shopify bills it on your Shopify invoice after a free trial, and you can switch plans at any time.</li>
+    <li>Tick <strong>Live mode</strong> and click <strong>Save rules</strong>. You can switch back to shadow mode at any time.</li>
+  </ol>
+
+  <h2 id="faq">Questions</h2>
+  <h3>What happens if I uninstall?</h3>
+  <p>DecisionPorter stops immediately and deletes your store's data, including your saved keys. Tags already applied stay in your apps; you can remove them by searching for the tag names above.</p>
+  <h3>What customer data do you keep?</h3>
+  <p>Only what the rules need (email, ticket IDs, the decision taken), kept for 90 days. See the <a href="/public/privacy-policy.html">Privacy Policy</a>.</p>
+  <h3>A connection says the key is invalid.</h3>
+  <p>Create a fresh key in that app, check it has the access listed above, and connect again. Keys are stored encrypted and never shown back to you.</p>
+  <h3>Need help?</h3>
+  <p>Email <a href="mailto:support@decisionporter.com">support@decisionporter.com</a>.</p>
+
+  <p style="margin-top:2.5rem;"><a href="/public/terms.html">Terms</a> · <a href="/public/privacy-policy.html">Privacy</a></p>
+</body>
+</html>

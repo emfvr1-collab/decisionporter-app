@@ -100,6 +100,7 @@ function requireSessionToken({ apiKey, apiSecret }) {
     try {
       const { shop, payload } = verifySessionToken(match[1], { apiKey, apiSecret });
       req.shop = shop;
+      req.sessionToken = match[1]; // used once for token exchange on first open
       // Shopify staff member's user id ("sub"), used for the access log.
       req.shopUser = payload.sub ? String(payload.sub) : null;
       next();

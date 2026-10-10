@@ -85,3 +85,29 @@ test("klaviyo flag PATCHes an existing profile and never creates one", async () 
   assert.equal(await k.setComplaintFlag("nobody@x.com", true), false);
   assert.equal(fetch.calls.length, 3, "no write for a customer not in Klaviyo");
 });
+
+test("token exchange posts the session token with the managed-install grant and returns an expiring token", async () => {
+  const fetch = fakeFetch(() => ({ body: { access_token: "a9", refresh_token: "r9", expires_in: 3600, scope: "read_orders" } }));
+  const t = await clients.exchangeSessionToken({ shop: "x.myshopify.com", sessionToken: "jwt.here", apiKey: "k", apiSecret: "s", fetch });
+  assert.equal(fetch.calls[0].url, "https://x.myshopify.com/admin/oauth/access_token");
+  assert.equal(fetch.calls[0].headers["Content-Type"], "application/x-www-form-urlencoded");
+  const sent = new URLSearchParams(fetch.calls[0].body);
+  assert.equal(sent.get("grant_type"), "urn:ietf:params:oauth:grant-type:token-exchange");
+  assert.equal(sent.get("subject_token"), "jwt.here");
+  assert.equal(sent.get("subject_token_type"), "urn:ietf:params:oauth:token-type:id_token");
+  assert.equal(sent.get("requested_token_type"), "urn:shopify:params:oauth:token-type:offline-access-token");
+  assert.equal(sent.get("expiring"), "1");
+  assert.equal(sent.get("client_id"), "k");
+  assert.equal(t.accessToken, "a9");
+  assert.equal(t.refreshToken, "r9");
+  const mins = (new Date(t.tokenExpiresAt).getTime() - Date.now()) / 60e3;
+  assert.ok(mins > 59 && mins <= 60);
+});
+
+test("token exchange failure throws with the HTTP status", async () => {
+  const fetch = fakeFetch(() => ({ status: 400, body: { error: "invalid_subject_token" } }));
+  await assert.rejects(
+    clients.exchangeSessionToken({ shop: "x.myshopify.com", sessionToken: "bad", apiKey: "k", apiSecret: "s", fetch }),
+    (err) => err.status === 400 && /invalid_subject_token/.test(err.message)
+  );
+});

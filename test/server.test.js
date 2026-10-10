@@ -24,6 +24,7 @@ if (!url) {
     APP_URL: base,
     PORT: String(PORT),
     DISABLE_SCHEDULER: "true",
+    PLAN_PRICES: "11,22,33",
   };
   let server;
   let db;
@@ -69,6 +70,14 @@ if (!url) {
     const html = await (await fetch(base + "/")).text();
     assert.match(html, /content="testkey"/);
     assert.match(html, /Decision log/);
+    assert.match(html, /help\.html/);
+    assert.doesNotMatch(html, /jm-shopdomain/);
+  });
+
+  test("help page is served", async () => {
+    const r = await fetch(base + "/public/help.html");
+    assert.equal(r.status, 200);
+    assert.match(await r.text(), /dp-hold-review/);
   });
 
   test("API rejects requests without a valid session token", async () => {
@@ -108,6 +117,27 @@ if (!url) {
     const log = (await (await api("/api/access-log")).json()).entries;
     assert.ok(log.some((e) => e.action === "GET /api/decisions" && e.actor === "shopify-user:1"));
     assert.ok(!log.some((e) => e.action === "GET /api/settings"));
+  });
+
+  test("billing status lists the three plans with prices from PLAN_PRICES", async () => {
+    const r = await (await api("/api/billing/status")).json();
+    assert.equal(r.plan, null);
+    assert.deepEqual(r.plans.map((p) => [p.key, p.price]), [["starter", 11], ["growth", 22], ["scale", 33]]);
+  });
+
+  test("Judge.me connect asks only for the API token (never the shop domain)", async () => {
+    const r = await api("/api/judgeme/connect", { method: "POST", body: "{}" });
+    assert.equal(r.status, 400);
+    assert.equal((await r.json()).error, "Missing apiToken");
+  });
+
+  test("a shop with no stored token is sent to re-authorize when token exchange fails", async () => {
+    const other = `noinstall-${Date.now()}.myshopify.com`;
+    const r = await fetch(base + "/api/settings", { headers: { Authorization: `Bearer ${sessionToken(other)}` } });
+    assert.equal(r.status, 401);
+    const body = await r.json();
+    assert.equal(body.reauthorize, `${base}/auth?shop=${encodeURIComponent(other)}`);
+    assert.equal(await db.getShop(other), null);
   });
 
   test("privacy webhooks verify the signature and erase customer data", async () => {

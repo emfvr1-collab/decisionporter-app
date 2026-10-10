@@ -150,8 +150,9 @@ app.get("/auth/callback", async (req, res) => {
       installedAt: new Date().toISOString(),
     });
 
-    // Register the webhooks Shopify requires
-    await registerMandatoryWebhooks(shop, tokenData.access_token);
+    // app/uninstalled via GraphQL. The three privacy (compliance) webhooks
+    // are declared in the app configuration, not registered here.
+    await registerUninstallWebhook(shop);
   } catch (err) {
     console.error("Install failed:", err.message);
     return res.status(502).send("Could not reach Shopify to finish installing — please try again.");
@@ -163,29 +164,32 @@ app.get("/auth/callback", async (req, res) => {
   res.redirect(`https://${shop}/admin/apps/${SHOPIFY_API_KEY}`);
 });
 
-async function registerMandatoryWebhooks(shop, accessToken) {
-  const topics = [
-    { topic: "app/uninstalled", address: `${APP_URL}/webhooks/app/uninstalled` },
-    { topic: "customers/data_request", address: `${APP_URL}/webhooks/customers/data_request` },
-    { topic: "customers/redact", address: `${APP_URL}/webhooks/customers/redact` },
-    { topic: "shop/redact", address: `${APP_URL}/webhooks/shop/redact` },
-  ];
-
-  for (const hook of topics) {
-    try {
-      await fetch(`https://${shop}/admin/api/${API_VERSION}/webhooks.json`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Shopify-Access-Token": accessToken,
-        },
-        body: JSON.stringify({
-          webhook: { topic: hook.topic, address: hook.address, format: "json" },
-        }),
-      });
-    } catch (err) {
-      console.error(`Failed to register webhook ${hook.topic}:`, err.message);
-    }
+// Subscribes to app/uninstalled with the GraphQL Admin API (new public
+// apps may only use GraphQL). Verified for API 2026-07 on 2026-10-09:
+// webhookSubscriptionCreate(topic: APP_UNINSTALLED, webhookSubscription: { uri }).
+// The mandatory privacy webhooks (customers/data_request, customers/redact,
+// shop/redact) must be declared in the app configuration instead; see
+// shopify.app.toml and README. Never throws: a failed subscription is
+// logged and retried on the next install or token exchange.
+async function registerUninstallWebhook(shop) {
+  try {
+    const data = await shopifyGraphql(
+      shop,
+      await getShopifyToken(shop),
+      `mutation Hook($topic: WebhookSubscriptionTopic!, $sub: WebhookSubscriptionInput!) {
+        webhookSubscriptionCreate(topic: $topic, webhookSubscription: $sub) {
+          webhookSubscription { id }
+          userErrors { field message }
+        }
+      }`,
+      { topic: "APP_UNINSTALLED", sub: { uri: `${APP_URL}/webhooks/app/uninstalled` } }
+    );
+    const errs = data.webhookSubscriptionCreate.userErrors || [];
+    // "already been taken" = the subscription exists from an earlier install.
+    const real = errs.filter((e) => !/taken|already/i.test(e.message));
+    if (real.length) console.error(`app/uninstalled webhook for ${shop}:`, real.map((e) => e.message).join("; "));
+  } catch (err) {
+    console.error(`Could not subscribe app/uninstalled for ${shop}:`, err.message);
   }
 }
 
@@ -301,10 +305,16 @@ app.post("/webhooks/shop/redact", async (req, res) => {
 //   4. After they approve, Shopify sends them to /billing/callback,
 //      where we ask Shopify which subscription is ACTUALLY active and
 //      save that plan — we never trust the URL alone.
+// Monthly prices in USD. Change without a code edit by setting
+// PLAN_PRICES="starter,growth,scale" (e.g. "49,149,399") on Render.
+const PLAN_PRICES = String(process.env.PLAN_PRICES || "29,79,199").split(",").map(Number);
+if (PLAN_PRICES.length !== 3 || PLAN_PRICES.some((n) => !Number.isFinite(n) || n <= 0)) {
+  throw new Error("PLAN_PRICES must be three positive numbers, e.g. 29,79,199");
+}
 const PLANS = {
-  starter: { name: "Starter", price: 29.0 },
-  growth: { name: "Growth", price: 79.0 },
-  scale: { name: "Scale", price: 199.0 },
+  starter: { name: "Starter", price: PLAN_PRICES[0] },
+  growth: { name: "Growth", price: PLAN_PRICES[1] },
+  scale: { name: "Scale", price: PLAN_PRICES[2] },
 };
 const TRIAL_DAYS = 14;
 
@@ -344,6 +354,40 @@ async function fetchActiveSubscription(shop, accessToken) {
 // uses the shop FROM THE TOKEN (req.shop), never from the request.
 app.use("/api", requireSessionToken({ apiKey: SHOPIFY_API_KEY, apiSecret: SHOPIFY_API_SECRET }));
 
+// First open after install (or reinstall): no stored token for this shop.
+// With Shopify managed installation the merchant has already approved the
+// permissions, so swap the session token for an offline token. If that
+// fails (e.g. the legacy install flow is still switched on and OAuth never
+// ran), tell the dashboard to send the merchant through /auth at top level.
+const exchanging = new Map();
+app.use("/api", async (req, res, next) => {
+  try {
+    const shopData = await db.getShop(req.shop);
+    if (shopData && shopData.accessToken) return next();
+    if (!exchanging.has(req.shop)) {
+      exchanging.set(req.shop, (async () => {
+        const t = await clients.exchangeSessionToken({
+          shop: req.shop, sessionToken: req.sessionToken, apiKey: SHOPIFY_API_KEY, apiSecret: SHOPIFY_API_SECRET, fetch,
+        });
+        await db.saveShop(req.shop, {
+          accessToken: t.accessToken, refreshToken: t.refreshToken, tokenExpiresAt: t.tokenExpiresAt,
+          installedAt: new Date().toISOString(),
+        });
+        await registerUninstallWebhook(req.shop);
+      })().finally(() => exchanging.delete(req.shop)));
+    }
+    await exchanging.get(req.shop);
+    next();
+  } catch (err) {
+    console.error(`Token exchange failed for ${req.shop}:`, err.message);
+    res.status(401).json({
+      ok: false,
+      error: "DecisionPorter needs your permission to finish installing.",
+      reauthorize: `${APP_URL}/auth?shop=${encodeURIComponent(req.shop)}`,
+    });
+  }
+});
+
 // Access log: every dashboard request that returns or changes data that
 // can include customer personal data is recorded with the Shopify staff
 // user who made it. Status checks are skipped (no personal data).
@@ -357,9 +401,22 @@ app.use("/api", (req, res, next) => {
   next();
 });
 
+// Development stores can't pay real charges, and Shopify reviewers test on
+// development stores, so their charges are always test charges.
+// ShopPlan.partnerDevelopment verified for API 2026-07 on 2026-10-09.
+async function isDevelopmentStore(shop) {
+  const data = await shopifyGraphql(shop, await getShopifyToken(shop), `query { shop { plan { partnerDevelopment } } }`);
+  return Boolean(data.shop && data.shop.plan && data.shop.plan.partnerDevelopment);
+}
+
 app.get("/api/billing/status", async (req, res) => {
   const shopData = await db.getShop(req.shop);
-  res.json({ ok: true, plan: (shopData && shopData.plan) || null });
+  res.json({
+    ok: true,
+    plan: (shopData && shopData.plan) || null,
+    trialDays: TRIAL_DAYS,
+    plans: Object.entries(PLANS).map(([key, p]) => ({ key, name: p.name, price: p.price })),
+  });
 });
 
 app.post("/api/billing/subscribe", async (req, res) => {
@@ -371,7 +428,10 @@ app.post("/api/billing/subscribe", async (req, res) => {
   const shopData = await db.getShop(shop);
   if (!shopData || !shopData.accessToken) return res.status(401).json({ ok: false, error: "Install the app on this store first" });
 
+  if (shopData.plan === planKey) return res.status(400).json({ ok: false, error: `You're already on ${plan.name}.` });
+
   try {
+    const testCharge = process.env.BILLING_TEST_MODE === "true" || (await isDevelopmentStore(shop));
     const data = await shopifyGraphql(
       shop,
       await getShopifyToken(shop),
@@ -385,7 +445,7 @@ app.post("/api/billing/subscribe", async (req, res) => {
         name: `DecisionPorter — ${plan.name}`,
         returnUrl: `${APP_URL}/billing/callback?shop=${encodeURIComponent(shop)}`,
         trialDays: TRIAL_DAYS,
-        test: process.env.BILLING_TEST_MODE === "true", // keep true until you launch for real
+        test: testCharge,
         lineItems: [
           {
             plan: {
@@ -711,14 +771,17 @@ app.get("/api/judgeme/status", async (req, res) => {
 
 app.post("/api/judgeme/connect", async (req, res) => {
   const shop = req.shop;
-  const { shopDomain, apiToken } = req.body;
-  if (!shopDomain || !apiToken) {
-    return res.status(400).json({ ok: false, error: "Missing shopDomain or apiToken" });
+  // Shopify rule 2.3.1: never ask merchants to type their store domain.
+  // Judge.me's shop_domain is the store's myshopify.com domain.
+  const shopDomain = shop;
+  const { apiToken } = req.body;
+  if (!apiToken) {
+    return res.status(400).json({ ok: false, error: "Missing apiToken" });
   }
 
   const valid = await verifyJudgeMeCredentials(shopDomain, apiToken);
   if (!valid) {
-    return res.status(401).json({ ok: false, error: "Judge.me rejected those credentials — double-check your shop domain and Private API Token under Settings → Integrations → View API tokens." });
+    return res.status(401).json({ ok: false, error: "Judge.me rejected that token — double-check your Private API Token under Settings → Integrations → View API tokens." });
   }
 
   const shopData = await db.getShop(shop);
@@ -1102,7 +1165,6 @@ db.migrate()
         setTimeout(purge, 60 * 1000);
         setInterval(purge, 24 * 60 * 60 * 1000);
       }
-      console.log(`Set APP_URL in .env to your public URL, then install via /auth?shop=your-store.myshopify.com`);
     });
   })
   .catch((err) => {

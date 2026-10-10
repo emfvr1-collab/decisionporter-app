@@ -1,0 +1,41 @@
+# DecisionPorter app configuration (Shopify CLI format).
+# Used by `shopify app deploy` to publish a new app version with:
+#  - Shopify managed installation (use_legacy_install_flow = false)
+#  - the uninstall webhook and the three mandatory privacy (compliance) webhooks
+#
+# BEFORE USING: replace REPLACE_WITH_CLIENT_ID with the app's Client ID
+# (Dev Dashboard → DecisionPorter → Settings). It is the same value as
+# SHOPIFY_API_KEY on Render. It is not a secret, but never put the
+# client SECRET in this file.
+
+name = "DecisionPorter"
+client_id = "REPLACE_WITH_CLIENT_ID"
+application_url = "https://decisionporter-app.onrender.com"
+embedded = true
+
+[access_scopes]
+# Must match SCOPES in server.js
+scopes = "read_orders,write_products,write_customers"
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = ["https://decisionporter-app.onrender.com/auth/callback"]
+
+[webhooks]
+api_version = "2026-07"
+
+[[webhooks.subscriptions]]
+topics = ["app/uninstalled"]
+uri = "/webhooks/app/uninstalled"
+
+[[webhooks.subscriptions]]
+compliance_topics = ["customers/data_request"]
+uri = "/webhooks/customers/data_request"
+
+[[webhooks.subscriptions]]
+compliance_topics = ["customers/redact"]
+uri = "/webhooks/customers/redact"
+
+[[webhooks.subscriptions]]
+compliance_topics = ["shop/redact"]
+uri = "/webhooks/shop/redact"

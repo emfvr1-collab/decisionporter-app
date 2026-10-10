@@ -221,7 +221,44 @@ function makeInventoryPlannerClient({ config, fetch }) {
   };
 }
 
+// ---------- Token exchange (Shopify managed installation) ----------
+// With managed installation Shopify shows the permission screen itself;
+// the app then swaps the session token from App Bridge for an expiring
+// offline access token. Verified against shopify.dev "Token exchange"
+// on 2026-10-09: POST form-encoded to /admin/oauth/access_token with the
+// grant and token types below. Fails (400) if the app isn't installed on
+// the shop or the session token is invalid.
+async function exchangeSessionToken({ shop, sessionToken, apiKey, apiSecret, fetch }) {
+  const body = new URLSearchParams({
+    client_id: apiKey,
+    client_secret: apiSecret,
+    grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+    subject_token: sessionToken,
+    subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+    requested_token_type: "urn:shopify:params:oauth:token-type:offline-access-token",
+    expiring: "1",
+  });
+  const res = await fetch(`https://${shop}/admin/oauth/access_token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", accept: "application/json" },
+    body: body.toString(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.access_token) {
+    const err = new Error(`Token exchange failed (${res.status}${data.error ? `: ${data.error}` : ""})`);
+    err.status = res.status;
+    throw err;
+  }
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token || null,
+    tokenExpiresAt: data.expires_in ? new Date(Date.now() + data.expires_in * 1000).toISOString() : null,
+    scope: data.scope || null,
+  };
+}
+
 module.exports = {
+  exchangeSessionToken,
   makeTokenManager,
   makeShopifyClient,
   makeGorgiasClient,
