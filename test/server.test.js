@@ -122,7 +122,17 @@ if (!url) {
   test("billing status lists the three plans with prices from PLAN_PRICES", async () => {
     const r = await (await api("/api/billing/status")).json();
     assert.equal(r.plan, null);
-    assert.deepEqual(r.plans.map((p) => [p.key, p.price]), [["starter", 11], ["growth", 22], ["scale", 33]]);
+    assert.deepEqual(r.plans.map((p) => [p.key, p.price, p.ticketLimit]), [["starter", 11, 300], ["growth", 22, 2000], ["scale", 33, 5000]]);
+  });
+
+  test("settings report plan usage against the plan's ticket limit", async () => {
+    let r = await (await api("/api/settings")).json();
+    assert.deepEqual(r.usage, { used: 0, limit: null, windowDays: 30, overLimit: false }, "no plan, no limit");
+    await db.saveShop(SHOP, { plan: "starter" });
+    await db.store.recordTickets({ shop: SHOP, tickets: [{ id: "a", createdAt: new Date() }, { id: "b", createdAt: new Date() }] });
+    r = await (await api("/api/settings")).json();
+    assert.deepEqual(r.usage, { used: 2, limit: 300, windowDays: 30, overLimit: false });
+    await db.saveShop(SHOP, { plan: null });
   });
 
   test("Judge.me connect asks only for the API token (never the shop domain)", async () => {

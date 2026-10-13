@@ -140,6 +140,18 @@ function isLive(settings, shopData) {
   return settings.mode === "live" && Boolean(shopData && shopData.plan);
 }
 
+// New Gorgias tickets per rolling 30 days that each paid plan acts on
+// live. Past the limit, new decisions fall back to shadow mode (logged,
+// not applied) until usage drops or the merchant upgrades. Holds already
+// applied live are still released normally, so no tag is left behind.
+// A plan key not listed here (e.g. a legacy plan) has no limit.
+const PLAN_TICKET_LIMITS = Object.freeze({ starter: 300, growth: 2000, scale: 5000 });
+const USAGE_WINDOW_DAYS = 30;
+
+function planTicketLimit(plan) {
+  return Object.prototype.hasOwnProperty.call(PLAN_TICKET_LIMITS, plan) ? PLAN_TICKET_LIMITS[plan] : null;
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function customerEmail(ticket) {
@@ -153,7 +165,8 @@ function customerEmail(ticket) {
  *
  * deps = {
  *   store:   { listActiveHolds, createHold, updateHold, releaseHold, logDecision,
- *              hasDecision, addSkuSignal, hasSkuSignalForTicket, countSkuSignals },
+ *              hasDecision, addSkuSignal, hasSkuSignalForTicket, countSkuSignals,
+ *              recordTickets?, countTickets? (plan usage; skipped if absent) },
  *   gorgias: { fetchRecentTickets(), addTag(ticketId, tag) }          (required)
  *   shopify: { findCustomerByEmail(email), latestOrderProducts(customerId),
  *              addTags(gid, tags), removeTags(gid, tags) }           (required)
@@ -164,13 +177,42 @@ function customerEmail(ticket) {
  */
 async function runCycle({ shop, shopData, settings: rawSettings, deps }) {
   const settings = normalizeSettings(rawSettings);
-  const live = isLive(settings, shopData);
-  const mode = live ? "live" : "shadow";
   const now = deps.now || new Date();
   const { store, gorgias, shopify, klaviyo, inventoryPlanner } = deps;
-  const summary = { mode, held: 0, released: 0, vip: 0, skuFlags: 0, errors: [] };
 
   const tickets = await gorgias.fetchRecentTickets();
+
+  // Plan usage: count each new ticket once, by when it was created in Gorgias.
+  let usage = null;
+  if (store.recordTickets && store.countTickets) {
+    await store.recordTickets({
+      shop,
+      tickets: tickets.filter((t) => !t.spam && t.id != null).map((t) => {
+        const created = t.created_datetime ? new Date(t.created_datetime) : now;
+        return { id: String(t.id), createdAt: Number.isNaN(created.getTime()) || created > now ? now : created };
+      }),
+    });
+    const limit = planTicketLimit(shopData && shopData.plan);
+    const used = await store.countTickets({ shop, since: new Date(now - USAGE_WINDOW_DAYS * DAY_MS) });
+    usage = { used, limit, overLimit: limit != null && used > limit };
+  }
+
+  const wantsLive = isLive(settings, shopData);
+  const live = wantsLive && !(usage && usage.overLimit);
+  const mode = live ? "live" : "shadow";
+  const summary = { mode, held: 0, released: 0, vip: 0, skuFlags: 0, errors: [], usage };
+
+  if (wantsLive && !live) {
+    // One log line per day, not one per 15-minute cycle.
+    const day = now.toISOString().slice(0, 10);
+    if (!(await store.hasDecision({ shop, rule: "planLimit", subjectId: day }))) {
+      await store.logDecision({
+        shop, mode: "shadow", createdAt: now, rule: "planLimit", status: "info", subjectId: day,
+        summary: `${usage.used} new tickets in the last ${USAGE_WINDOW_DAYS} days is over your plan's ${usage.limit}.`,
+        action: "New decisions are logged in shadow mode until usage drops or you upgrade. Existing holds are still released.",
+      });
+    }
+  }
   const open = tickets.filter((t) => t.status === "open" && !t.spam);
 
   // Customers with an open complaint right now → the tickets behind it.
@@ -380,6 +422,9 @@ module.exports = {
   productSignal,
   normalizeSettings,
   isLive,
+  planTicketLimit,
+  PLAN_TICKET_LIMITS,
+  USAGE_WINDOW_DAYS,
   runCycle,
   customerEmail,
   DEFAULT_SETTINGS,

@@ -101,6 +101,7 @@
     <div class="tile"><div class="n" id="t-vip">–</div><div class="l">VIP tickets flagged,<br>7 days</div></div>
     <div class="tile"><div class="n" id="t-sku">–</div><div class="l">Products flagged,<br>7 days</div></div>
   </div>
+  <p class="muted" id="plan-usage" style="display:none;"></p>
   <p class="muted" id="last-run"></p>
   <button class="btn" id="run-btn" onclick="runNow()">Run now</button>
   <div class="status-msg" id="run-status"></div>
@@ -677,8 +678,8 @@
   }
 
   // ---------- Decision engine ----------
-  var RULE_NAMES = { holdReviews: 'Hold reviews', pauseMarketing: 'Pause promos', skuFlags: 'Product flag', vipEscalation: 'VIP ticket' };
-  var STATUS_NAMES = { would_apply: 'Would apply (shadow)', applied: 'Applied', released: 'Released', failed: 'Failed' };
+  var RULE_NAMES = { holdReviews: 'Hold reviews', pauseMarketing: 'Pause promos', skuFlags: 'Product flag', vipEscalation: 'VIP ticket', planLimit: 'Plan limit' };
+  var STATUS_NAMES = { would_apply: 'Would apply (shadow)', applied: 'Applied', released: 'Released', failed: 'Failed', info: 'Notice' };
 
   function setText(id, v) { document.getElementById(id).textContent = v; }
 
@@ -696,11 +697,21 @@
       var badge = document.getElementById('mode-badge');
       badge.textContent = d.live ? 'Live' : 'Shadow mode';
       badge.className = 'badge ' + (d.live ? 'live' : 'shadow');
+      var u = d.usage || {};
       setText('mode-explain', d.live
         ? 'Live: DecisionPorter is tagging customers, products and tickets in your apps.'
         : (s.mode === 'live' && !d.plan
             ? 'Live mode is switched on but needs a paid plan. Until then DecisionPorter only logs what it would do.'
-            : 'Shadow mode: DecisionPorter logs what it would do and changes nothing in your apps. Free.'));
+            : (s.mode === 'live' && u.overLimit
+                ? 'Your plan\'s ticket limit is used up, so new decisions are logged in shadow mode. Holds already applied are still released. Upgrade below to switch live actions back on.'
+                : 'Shadow mode: DecisionPorter logs what it would do and changes nothing in your apps. Free.')));
+      var usageEl = document.getElementById('plan-usage');
+      if (d.plan && u.limit) {
+        usageEl.textContent = 'Plan usage: ' + u.used + ' of ' + u.limit + ' new tickets in the last ' + u.windowDays + ' days.';
+        usageEl.style.display = '';
+      } else {
+        usageEl.style.display = 'none';
+      }
       var last = d.lastCycleAt ? 'Last check: ' + new Date(d.lastCycleAt).toLocaleString() : 'Not run yet.';
       if (d.lastCycleError) last += ' Problem: ' + d.lastCycleError;
       setText('last-run', last);
@@ -799,7 +810,8 @@
         var h = document.createElement('h3'); h.textContent = p.name; card.appendChild(h);
         var pr = document.createElement('div'); pr.className = 'price'; pr.textContent = '$' + p.price + '/mo'; card.appendChild(pr);
         var note = document.createElement('p'); note.className = 'muted'; note.style.margin = '0 0 10px';
-        note.textContent = 'Live mode. ' + d.trialDays + '-day free trial.'; card.appendChild(note);
+        note.textContent = 'Live mode for up to ' + Number(p.ticketLimit).toLocaleString() + ' new tickets per ' + (d.usageWindowDays || 30) + ' days. ' + d.trialDays + '-day free trial.';
+        card.appendChild(note);
         var b = document.createElement('button');
         if (d.plan === p.key) { b.textContent = 'Current plan'; b.disabled = true; }
         else { b.textContent = d.plan ? 'Switch to ' + p.name : 'Choose'; b.onclick = function() { selectPlan(p.key); }; }

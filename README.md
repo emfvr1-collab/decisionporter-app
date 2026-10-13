@@ -161,7 +161,10 @@ Changed on Oct 9 to meet App Store review rules:
   in `shopify.app.toml` (`compliance_topics`), which is how Shopify
   requires them to be set up.
 - **No manual shop domain.** Judge.me only asks for its API token.
-- **Billing.** Prices come from `PLAN_PRICES`. Development stores always
+- **Billing.** Prices come from `PLAN_PRICES` (default 29,99,249). Each plan
+  covers new Gorgias tickets per rolling 30 days: Starter 300, Growth 2,000,
+  Scale 5,000 (`engine.PLAN_TICKET_LIMITS`). Over the limit, new decisions
+  run in shadow mode and the dashboard says so; live holds still release. Development stores always
   get test charges. The dashboard shows the current plan and lets the
   merchant switch plans without reinstalling.
 - **Help page** at `/public/help.html`, linked from the dashboard footer.
@@ -171,7 +174,8 @@ Still to do:
    version from it (`shopify app deploy`), or set the same values by hand in
    the Dev Dashboard: legacy install flow off, compliance webhook URLs set.
 2. Set up the `support@decisionporter.com` mailbox (used on every policy page).
-3. Decide prices and set `PLAN_PRICES` on Render.
+3. Prices decided Oct 12: $29 / $99 / $249. Set `PLAN_PRICES=29,99,249` on
+   Render (or leave it unset; that is now the default).
 4. Test with real accounts on the development store (Gorgias trial,
    Klaviyo free account, Judge.me free plan) in shadow mode.
 5. Listing: icon (1200×1200), 3–6 screenshots (1600×900), screencast,

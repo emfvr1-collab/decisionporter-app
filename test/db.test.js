@@ -113,10 +113,24 @@ if (!url) {
     assert.deepEqual((await db.listAccessLog(SHOP)).map((a) => a.action), ["new"]);
   });
 
+  test("ticket usage counts each ticket once, by creation date, and is purged with old data", async () => {
+    const now = Date.now();
+    const base30 = await db.store.countTickets({ shop: SHOP, since: new Date(now - 30 * 864e5) });
+    const baseAll = await db.store.countTickets({ shop: SHOP, since: new Date(0) });
+    const recent = new Date(now - 2 * 864e5), old = new Date(now - 40 * 864e5), ancient = new Date(now - 200 * 864e5);
+    await db.store.recordTickets({ shop: SHOP, tickets: [{ id: "1", createdAt: recent }, { id: "2", createdAt: old }, { id: "3", createdAt: ancient }] });
+    await db.store.recordTickets({ shop: SHOP, tickets: [{ id: "1", createdAt: new Date() }] }); // duplicate ignored
+    assert.equal(await db.store.countTickets({ shop: SHOP, since: new Date(now - 30 * 864e5) }), base30 + 1);
+    assert.equal(await db.store.countTickets({ shop: SHOP, since: new Date(0) }), baseAll + 3);
+    await db.purgeExpired();
+    assert.equal(await db.store.countTickets({ shop: SHOP, since: new Date(0) }), baseAll + 2, "only the 200-day-old ticket is purged");
+  });
+
   test("deleteShop removes everything for the shop", async () => {
     await db.deleteShop(SHOP);
     assert.equal(await db.getShop(SHOP), null);
     const left = await db.pool.query("SELECT count(*)::int AS n FROM decisions WHERE shop = $1", [SHOP]);
     assert.equal(left.rows[0].n, 0);
+    assert.equal(await db.store.countTickets({ shop: SHOP, since: new Date(0) }), 0);
   });
 }

@@ -111,6 +111,16 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (shop, ticket_id, product_id)
     )`);
+  // Plan usage: which Gorgias tickets DecisionPorter has seen, and when each
+  // was created. Ticket ids only, no customer data.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ticket_usage (
+      shop TEXT NOT NULL,
+      ticket_id TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (shop, ticket_id)
+    )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS ticket_usage_shop_created ON ticket_usage (shop, created_at)`);
   // Who accessed personal data, and when (Shopify protected-customer-data
   // requirement). Kept for ACCESS_LOG_RETENTION_DAYS.
   await pool.query(`
@@ -235,6 +245,7 @@ async function deleteShop(shop) {
   await pool.query("DELETE FROM decisions WHERE shop = $1", [shop]);
   await pool.query("DELETE FROM holds WHERE shop = $1", [shop]);
   await pool.query("DELETE FROM sku_signals WHERE shop = $1", [shop]);
+  await pool.query("DELETE FROM ticket_usage WHERE shop = $1", [shop]);
   await pool.query("DELETE FROM access_log WHERE shop = $1", [shop]);
   await pool.query("DELETE FROM shops WHERE shop = $1", [shop]);
 }
@@ -308,6 +319,22 @@ const store = {
     );
     return r.rows[0].n;
   },
+  async recordTickets({ shop, tickets }) {
+    if (!tickets || !tickets.length) return 0;
+    const ids = tickets.map((t) => String(t.id));
+    const created = tickets.map((t) => new Date(t.createdAt));
+    const r = await pool.query(
+      `INSERT INTO ticket_usage (shop, ticket_id, created_at)
+       SELECT $1, u.id, u.created FROM unnest($2::text[], $3::timestamptz[]) AS u(id, created)
+       ON CONFLICT DO NOTHING`,
+      [shop, ids, created]
+    );
+    return r.rowCount;
+  },
+  async countTickets({ shop, since }) {
+    const r = await pool.query("SELECT count(*)::int AS n FROM ticket_usage WHERE shop = $1 AND created_at >= $2", [shop, since]);
+    return r.rows[0].n;
+  },
 };
 
 // ---------- Dashboard reads ----------
@@ -357,6 +384,7 @@ async function purgeExpired({ now = new Date(), days = RETENTION_DAYS, accessLog
   const d = await pool.query("DELETE FROM decisions WHERE created_at < $1", [cutoff]);
   const h = await pool.query("DELETE FROM holds WHERE released_at IS NOT NULL AND released_at < $1", [cutoff]);
   const s = await pool.query("DELETE FROM sku_signals WHERE created_at < $1", [cutoff]);
+  await pool.query("DELETE FROM ticket_usage WHERE created_at < $1", [cutoff]);
   const a = await pool.query("DELETE FROM access_log WHERE at < $1", [logCutoff]);
   return { decisions: d.rowCount, holds: h.rowCount, skuSignals: s.rowCount, accessLog: a.rowCount };
 }

@@ -220,3 +220,74 @@ test("turning a rule off skips it", async () => {
   assert.equal(out.vip, 0);
   assert.deepEqual(f.calls.gorgiasTags, []);
 });
+
+// ---------- Plan ticket limits ----------
+function withUsage(store) {
+  const seen = new Map(); // shop:ticketId -> createdAt
+  store.recordTickets = async ({ shop, tickets }) => {
+    for (const t of tickets) if (!seen.has(`${shop}:${t.id}`)) seen.set(`${shop}:${t.id}`, t.createdAt);
+  };
+  store.countTickets = async ({ shop, since }) =>
+    [...seen.entries()].filter(([k, at]) => k.startsWith(`${shop}:`) && at >= since).length;
+  return store;
+}
+const routine = (n, start = 1000) => Array.from({ length: n }, (_, i) => ticket(start + i, `r${i}@x.com`, "when will my order ship"));
+
+test("plan limits: Starter 300, Growth 2000, Scale 5000; unknown plans unlimited", () => {
+  const { planTicketLimit } = require("../engine");
+  assert.equal(planTicketLimit("starter"), 300);
+  assert.equal(planTicketLimit("growth"), 2000);
+  assert.equal(planTicketLimit("scale"), 5000);
+  assert.equal(planTicketLimit("legacy"), null);
+  assert.equal(planTicketLimit(null), null);
+});
+
+test("under the plan limit, live actions apply and usage is reported", async () => {
+  const store = withUsage(memoryStore());
+  const f = fakes({ tickets: [ticket(1, "a@x.com", "refund please"), ...routine(10)], customers: { "a@x.com": { id: "C1", amountSpent: 10 } } });
+  const out = await runCycle({ shop: "s", shopData: { plan: "starter" }, settings: LIVE, deps: { store, ...f } });
+  assert.equal(out.mode, "live");
+  assert.deepEqual(out.usage, { used: 11, limit: 300, overLimit: false });
+  assert.deepEqual(f.calls.shopifyAdd, [["C1", TAGS.holdReview]]);
+});
+
+test("over the plan limit, new decisions fall back to shadow and a notice is logged once a day", async () => {
+  const store = withUsage(memoryStore());
+  const tickets = [ticket(1, "a@x.com", "refund please"), ...routine(300)];
+  const f = fakes({ tickets, customers: { "a@x.com": { id: "C1", amountSpent: 10 } } });
+  const now = new Date("2026-10-13T12:00:00Z");
+  const out = await runCycle({ shop: "s", shopData: { plan: "starter" }, settings: LIVE, deps: { store, ...f, now } });
+  assert.equal(out.mode, "shadow");
+  assert.equal(out.usage.used, 301);
+  assert.equal(out.usage.overLimit, true);
+  assert.deepEqual(f.calls.shopifyAdd, [], "nothing written while over the limit");
+  assert.equal(out.held, 1, "the hold is still recorded, in shadow");
+  await runCycle({ shop: "s", shopData: { plan: "starter" }, settings: LIVE, deps: { store, ...f, now: new Date(now.getTime() + 15 * 60e3) } });
+  assert.equal(store.s.decisions.filter((d) => d.rule === "planLimit").length, 1);
+  // Upgrading lifts the limit and the shadow hold is applied for real.
+  const out3 = await runCycle({ shop: "s", shopData: { plan: "growth" }, settings: LIVE, deps: { store, ...f, now: new Date(now.getTime() + 30 * 60e3) } });
+  assert.equal(out3.mode, "live");
+  assert.deepEqual(f.calls.shopifyAdd, [["C1", TAGS.holdReview]]);
+});
+
+test("over the limit, holds applied live earlier are still released", async () => {
+  const store = withUsage(memoryStore());
+  const customers = { "a@x.com": { id: "C1", amountSpent: 10 } };
+  const f1 = fakes({ tickets: [ticket(1, "a@x.com", "refund please")], customers });
+  await runCycle({ shop: "s", shopData: { plan: "starter" }, settings: LIVE, deps: { store, ...f1 } });
+  const f2 = fakes({ tickets: [ticket(1, "a@x.com", "refund please", "closed"), ...routine(305)], customers });
+  const out = await runCycle({ shop: "s", shopData: { plan: "starter" }, settings: LIVE, deps: { store, ...f2 } });
+  assert.equal(out.usage.overLimit, true);
+  assert.equal(out.released, 1);
+  assert.deepEqual(f2.calls.shopifyRemove, [["C1", TAGS.holdReview]]);
+  assert.deepEqual(f2.calls.klaviyo, [["a@x.com", false]]);
+});
+
+test("tickets created more than 30 days ago do not count toward the limit", async () => {
+  const store = withUsage(memoryStore());
+  const now = new Date("2026-10-13T12:00:00Z");
+  const old = routine(400).map((t) => ({ ...t, created_datetime: new Date(now - 45 * DAY).toISOString() }));
+  const out = await runCycle({ shop: "s", shopData: { plan: "starter" }, settings: LIVE, deps: { store, ...fakes({ tickets: old }), now } });
+  assert.equal(out.usage.used, 0);
+  assert.equal(out.mode, "live");
+});

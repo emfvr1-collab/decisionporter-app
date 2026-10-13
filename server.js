@@ -307,7 +307,8 @@ app.post("/webhooks/shop/redact", async (req, res) => {
 //      save that plan — we never trust the URL alone.
 // Monthly prices in USD. Change without a code edit by setting
 // PLAN_PRICES="starter,growth,scale" (e.g. "49,149,399") on Render.
-const PLAN_PRICES = String(process.env.PLAN_PRICES || "29,79,199").split(",").map(Number);
+// Monthly ticket limits per plan live in engine.PLAN_TICKET_LIMITS.
+const PLAN_PRICES = String(process.env.PLAN_PRICES || "29,99,249").split(",").map(Number);
 if (PLAN_PRICES.length !== 3 || PLAN_PRICES.some((n) => !Number.isFinite(n) || n <= 0)) {
   throw new Error("PLAN_PRICES must be three positive numbers, e.g. 29,79,199");
 }
@@ -415,7 +416,8 @@ app.get("/api/billing/status", async (req, res) => {
     ok: true,
     plan: (shopData && shopData.plan) || null,
     trialDays: TRIAL_DAYS,
-    plans: Object.entries(PLANS).map(([key, p]) => ({ key, name: p.name, price: p.price })),
+    plans: Object.entries(PLANS).map(([key, p]) => ({ key, name: p.name, price: p.price, ticketLimit: engine.planTicketLimit(key) })),
+    usageWindowDays: engine.USAGE_WINDOW_DAYS,
   });
 });
 
@@ -1068,10 +1070,14 @@ app.get("/api/settings", async (req, res) => {
   const shopData = await db.getShop(req.shop);
   if (!shopData) return res.status(401).json({ ok: false, error: "Install the app on this store first" });
   const settings = engine.normalizeSettings(shopData.settings);
+  const limit = engine.planTicketLimit(shopData.plan);
+  const used = await db.store.countTickets({ shop: req.shop, since: new Date(Date.now() - engine.USAGE_WINDOW_DAYS * 864e5) });
+  const usage = { used, limit, windowDays: engine.USAGE_WINDOW_DAYS, overLimit: limit != null && used > limit };
   res.json({
     ok: true,
     settings,
-    live: engine.isLive(settings, shopData),
+    live: engine.isLive(settings, shopData) && !usage.overLimit,
+    usage,
     plan: shopData.plan || null,
     lastCycleAt: shopData.lastCycleAt,
     lastCycleError: shopData.lastCycleError,
